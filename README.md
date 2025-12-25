@@ -1,4 +1,32 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+
+## Processing Tiles
+Downloaded dataset from: https://download.gebco.net/
+Click other downloads top right > GEBCO 2024 Grid With sub-ice topography/bathymetry information > Single netCDF 
+
+Then I processed into tiles on WSL like this:
+
+```bash
+gdal_translate -of GTiff \
+  -co TILED=YES -co COMPRESS=DEFLATE -co PREDICTOR=2 -co BIGTIFF=YES \
+  GEBCO_2024_sub_ice_topo.nc gebco4326.tif
+
+gdalwarp \
+  -t_srs EPSG:3857 \
+  -r bilinear \
+  -dstnodata -32768 \
+  -co TILED=YES -co COMPRESS=DEFLATE -co PREDICTOR=2 -co BIGTIFF=YES \
+  gebco4326.tif gebco3857.tif
+
+gdaladdo -r average gebco3857.tif 2 4 8 16 32 64
+
+gdal_translate -of VRT -ot Byte \
+  -a_nodata 255 \
+  -scale -10919 8627 0 254 \
+  gebco3857.tif gebco3857_byte.vrt
+
+gdal2tiles.py -z 0-3 -w none gebco3857_byte.vrt tiles/
+```
+
 
 ## Getting Started
 
@@ -16,21 +44,3 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
