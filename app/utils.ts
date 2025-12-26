@@ -1,3 +1,5 @@
+import L from "leaflet";
+
 export function boxBlurMaskU8(
   mask: Uint8Array,
   w: number,
@@ -115,4 +117,14 @@ export function boxBlurMaskU8(
 
 function clamp(v: number, lo: number, hi: number) {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+export function tileRowToLat(
+    map: L.Map,
+    coords: L.Coords,
+    py: number,
+    tileHeight: number
+): number {
+    const globalY = coords.y * tileHeight + py;
+    return map.unproject(L.point(0, globalY), coords.z).lat;
 }
