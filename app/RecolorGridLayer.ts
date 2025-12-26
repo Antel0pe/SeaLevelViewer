@@ -1,5 +1,6 @@
 // RecolorGridLayer.ts
 import L from "leaflet";
+import { boxBlurMaskU8 } from "./utils";
 
 type TileRecord = {
     ctx: CanvasRenderingContext2D;
@@ -22,6 +23,7 @@ type ColorContext = {
         heightAboveSea: Uint8Array;      // 0 for sea, else (elev - seaLevel)
         iceMask: Uint8Array;
         effectiveSeaLevel: number;
+        landProximity: Float32Array;
     };
 };
 
@@ -34,6 +36,10 @@ export type RecolorParams = {
     seaBias: number;
     landBias: number;
     elevationModifier: number;
+
+    seaLevelDropDueToIce: number;
+
+    dryingOutExponent: number;
 };
 
 export type RecolorLayer = L.GridLayer & {
@@ -146,14 +152,15 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                     heightAboveSea: new Uint8Array(width * height),
                     iceMask: new Uint8Array(width * height),
                     effectiveSeaLevel: this.params.seaLevel,
+                    landProximity: new Float32Array(width * height),
                 },
             };
         },
 
         deriveEffectiveSeaLevel: function (ctx: ColorContext) {
-            const { seaLevel, iceLevel } = ctx.params; // iceLevel: 0..1
+            const { seaLevel, iceLevel, seaLevelDropDueToIce } = ctx.params; // iceLevel: 0..1
 
-            const seaDrop = iceLevel * seaLevel;
+            const seaDrop = iceLevel * seaLevel * seaLevelDropDueToIce;
 
             // Clamp to [0, 255] so downstream logic stays sane
             let eff = seaLevel - seaDrop;
@@ -182,6 +189,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                     heightAboveSea[p] = h > 255 ? 255 : h < 0 ? 0 : h;
                 }
             }
+
+            ctx.derived.landProximity = boxBlurMaskU8(isLandMask, ctx.inputs.width, ctx.inputs.height, 8, 3);
         },
 
         colorPixelsByIce: function (ctx: ColorContext) {
@@ -193,11 +202,12 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 seaBias,
                 landBias,
                 elevationModifier,
+                dryingOutExponent,
             } = ctx.params;
 
             const threshold = 1 - iceLevel;
 
-            const { isLandMask, heightAboveSea, iceMask } = ctx.derived;
+            const { isLandMask, heightAboveSea, iceMask, landProximity } = ctx.derived;
 
             const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
             const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -221,7 +231,9 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const elevationWeighting = clamp01(elevation / elevationOfIce);
                 const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
 
-                const combined = clamp01(latitudeWeighting * (1 + elevationModifier * elevationWeighting) * landWeighting);
+                const moistureAvailability = 1 - Math.pow(landProximity[p], dryingOutExponent);
+
+                const combined = clamp01(latitudeWeighting * (1 + elevationModifier * elevationWeighting) * landWeighting * moistureAvailability);
                 iceMask[p] = combined > threshold ? 1 : 0;
             }
         },

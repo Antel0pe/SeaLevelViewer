@@ -1,3 +1,6 @@
+## Project Principles
+- Experimenting with aggressive simplicity while remaining in the realm of correctedness
+    - This means I'm not going to implement glacial models but simple, powerful levers to simulate ice ages
 
 ## Processing Tiles
 Downloaded dataset from: https://download.gebco.net/

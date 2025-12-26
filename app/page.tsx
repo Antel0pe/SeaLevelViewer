@@ -21,6 +21,9 @@ export default function Home() {
     seaBias: 0.7,
     landBias: 1.0,
     elevationModifier: 10.0,
+
+    seaLevelDropDueToIce: 0.05,
+    dryingOutExponent: 2,
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -108,6 +111,24 @@ export default function Home() {
                 step={0.01}
                 value={params.landBias}
                 onChange={(v) => setParams((p) => ({ ...p, landBias: v }))}
+              />
+
+              <Slider
+                label={`Sea level drop due to ice ${params.seaLevelDropDueToIce.toFixed(2)}`}
+                min={0}
+                max={1}
+                step={0.01}
+                value={params.seaLevelDropDueToIce}
+                onChange={(v) => setParams((p) => ({ ...p, seaLevelDropDueToIce: v }))}
+              />
+
+              <Slider
+                label={`Moisture drying out factor ${params.dryingOutExponent.toFixed(2)}`}
+                min={0}
+                max={5}
+                step={0.1}
+                value={params.dryingOutExponent}
+                onChange={(v) => setParams((p) => ({ ...p, dryingOutExponent: v }))}
               />
             </div>
           )}
