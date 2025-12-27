@@ -1,13 +1,13 @@
 // RecolorGridLayer.ts
 import L from "leaflet";
-import { boxBlurMaskU8, tileRowToLat } from "./utils";
-import { blurMaskWithSAT_U8, makeGetWindowForRow } from "./RectangleSum";
+import { tileRowToLat } from "./utils";
+import { blurMaskWithSAT_U8, makeGetWindowForRow, windowByLatitudeAnchors } from "./RectangleSum";
 
 type TileRecord = {
     ctx: CanvasRenderingContext2D;
     width: number;
     height: number;
-    originalData: Uint8ClampedArray;
+    originalData?: Uint8ClampedArray;
     coords: L.Coords;
 };
 
@@ -29,6 +29,33 @@ type ColorContext = {
     };
 };
 
+type WorldContext = {
+    inputs: {
+        originalData: Uint8ClampedArray; // the z=0 tile's RGBA
+        width: number;                  // 256
+        height: number;                 // 256
+        coords: L.Coords;               // { x:0, y:0, z:0 }
+    };
+    params: RecolorParams;
+    derived: {
+        isLandMask: Uint8Array;          // 0 sea, 1 land
+        heightAboveSea: Uint8Array;      // 0 for sea, else (elev - seaLevel)
+        iceMask: Uint8Array;
+        effectiveSeaLevel: number;
+        moistureAvailability: Float32Array;
+        sstByLatitude: Float32Array;
+    };
+    outputs: {
+        latitudeWeighting: Float32Array;
+        elevationWeighting: Float32Array;
+        landWeighting: Float32Array;
+        moistureAvailable: Float32Array;
+        combined: Float32Array;
+        threshold: Float32Array; // constant per world pixel, but stored for convenience
+    };
+};
+
+
 export type RecolorParams = {
     seaLevel: number;
     iceLevel: number;
@@ -38,14 +65,15 @@ export type RecolorParams = {
     seaBias: number;
     landBias: number;
     elevationModifier: number;
-
     seaLevelDropDueToIce: number;
-
     dryingOutExponent: number;
+    moistureBoostBias: number;
 };
+
 
 export type RecolorLayer = L.GridLayer & {
     setParams(p: Partial<RecolorParams>): void;
+    getInfoAtPoint(latlng: L.LatLng): LayerClickResult | null;
 };
 
 export type CanvasLayerCtor = new (opts?: L.GridLayerOptions) => RecolorLayer;
@@ -54,6 +82,31 @@ export type CreateRecolorLayerOpts = {
     getMap: () => L.Map | null;              // instead of mapRef
     tileUrl: (coords: L.Coords) => string;   // lets you swap sources easily
     initial: RecolorParams
+};
+
+export type LayerClickResult = {
+    latlng: L.LatLng;
+    zoom: number;
+    tile: { x: number; y: number; z: number };
+    tilePixel: { x: number; y: number };
+    worldIndex: number;
+    gx: number;
+    gy: number;
+    worldLat: number;
+    worldLng: number;
+
+    latitudeWeighting: number;
+    elevationWeighting: number;
+    landWeighting: number;
+    moistureAvailable: number;
+    combined: number;
+    threshold: number;
+    ice: boolean;
+
+    // optionally include raw derived values too
+    isLand: number;
+    heightAboveSea: number;
+    moistureAvailability: number;
 };
 
 export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
@@ -127,6 +180,11 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
         _tileStore: new WeakMap<HTMLCanvasElement, TileRecord>(),
         params: initial as RecolorParams,
 
+        _world: null as WorldContext | null,
+        _worldBasePromise: null as Promise<void> | null,
+
+
+
         buildColorContext: function (
             originalData: Uint8ClampedArray,
             width: number,
@@ -153,6 +211,42 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 },
             };
         },
+
+        buildWorldContext: function (
+            originalData: Uint8ClampedArray,
+            width: number,
+            height: number,
+            coords: L.Coords
+        ): WorldContext {
+            const n = width * height;
+
+            return {
+                inputs: {
+                    originalData,
+                    width,
+                    height,
+                    coords,
+                },
+                params: this.params,
+                derived: {
+                    isLandMask: new Uint8Array(n),
+                    heightAboveSea: new Uint8Array(n),
+                    iceMask: new Uint8Array(n),
+                    effectiveSeaLevel: this.params.seaLevel,
+                    moistureAvailability: new Float32Array(n),
+                    sstByLatitude: new Float32Array(n),
+                },
+                outputs: {
+                    latitudeWeighting: new Float32Array(n),
+                    elevationWeighting: new Float32Array(n),
+                    landWeighting: new Float32Array(n),
+                    moistureAvailable: new Float32Array(n),
+                    combined: new Float32Array(n),
+                    threshold: new Float32Array(n),
+                },
+            };
+        },
+
 
         deriveEffectiveSeaLevel: function (ctx: ColorContext) {
             const { seaLevel, iceLevel, seaLevelDropDueToIce } = ctx.params; // iceLevel: 0..1
@@ -223,7 +317,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             }
 
             ctx.derived.moistureAvailability = blurMaskWithSAT_U8(ctx.derived.sstByLatitude, width, height, 16, 3, makeGetWindowForRow(map, coords))
-            console.log(ctx.derived.moistureAvailability)
         },
 
         colorPixelsByIce: function (ctx: ColorContext) {
@@ -318,6 +411,65 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             return this.writeColorToPixels(ctx);
         },
 
+        _ensureWorldBaseLoaded: function (): Promise<void> {
+            // Already computed
+            if (this._world) return Promise.resolve();
+
+            // In-flight shared promise
+            if (this._worldBasePromise) return this._worldBasePromise;
+
+            // Start loading once
+            this._worldBasePromise = new Promise<void>((resolve, reject) => {
+                const z0: L.Coords = { x: 0, y: 0, z: 0 } as L.Coords;
+
+                const img = new Image();
+                img.crossOrigin = "anonymous";
+                img.src = tileUrl(z0);
+
+                img.onload = () => {
+                    try {
+                        const w = 256;
+                        const h = 256;
+
+                        const off = document.createElement("canvas");
+                        off.width = w;
+                        off.height = h;
+
+                        const offCtx = off.getContext("2d", { willReadFrequently: true });
+                        if (!offCtx) {
+                            reject(new Error("Failed to create 2D context for world base tile"));
+                            return;
+                        }
+
+                        offCtx.drawImage(img, 0, 0, w, h);
+
+                        const imageData = offCtx.getImageData(0, 0, w, h);
+                        const originalData = new Uint8ClampedArray(imageData.data);
+
+                        this._world = this.buildWorldContext(originalData, w, h, z0);
+                        this.recomputeWorldDerived();
+
+                        resolve();
+                    } catch (e) {
+                        reject(e);
+                    }
+                };
+
+                img.onerror = (e) => {
+                    reject(new Error("Failed to load z=0 world base tile image"));
+                };
+            });
+
+            // If it fails, allow retry next time (don’t cache failure forever)
+            this._worldBasePromise = this._worldBasePromise.catch((err: any) => {
+                this._worldBasePromise = null;
+                throw err;
+            });
+
+            return this._worldBasePromise;
+        },
+
+
         createTile: function (coords: L.Coords, done: (err: any, tile: HTMLElement) => void) {
             const tile = document.createElement("canvas");
             const ctx = tile.getContext("2d", { willReadFrequently: true });
@@ -327,40 +479,324 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             tile.width = size.x;
             tile.height = size.y;
 
-            const img = new Image();
-            img.crossOrigin = "anonymous";
+            this._ensureWorldBaseLoaded()
+                .then(() => {
+                    const useNewGlobalSampling = true; // flip true/false here
 
-            img.src = tileUrl(coords);
+                    if (useNewGlobalSampling) {
+                        // NEW PIPELINE: sample from world + draw
+                        this._tileStore.set(tile, {
+                            ctx,
+                            width: size.x,
+                            height: size.y,
+                            coords,
+                        });
 
-            img.onload = () => {
-                ctx.drawImage(img, 0, 0, size.x, size.y);
 
-                const src = ctx.getImageData(0, 0, size.x, size.y);
-                const originalData = new Uint8ClampedArray(src.data);
+                        const colored = this.writeColorToPixels_global(coords, size.x, size.y);
+                        ctx.putImageData(colored, 0, 0);
+                        done(null, tile);
+                        return;
+                    }
 
-                // Store by the actual canvas element
-                this._tileStore.set(tile, {
-                    ctx,
-                    width: size.x,
-                    height: size.y,
-                    originalData,
-                    coords
+                    const img = new Image();
+                    img.crossOrigin = "anonymous";
+
+                    img.src = tileUrl(coords);
+
+                    img.onload = () => {
+                        ctx.drawImage(img, 0, 0, size.x, size.y);
+
+                        const src = ctx.getImageData(0, 0, size.x, size.y);
+                        const originalData = new Uint8ClampedArray(src.data);
+
+                        // Store by the actual canvas element
+                        this._tileStore.set(tile, {
+                            ctx,
+                            width: size.x,
+                            height: size.y,
+                            originalData,
+                            coords
+                        });
+                        const ctxObj: ColorContext = this.buildColorContext(originalData, size.x, size.y, coords);
+                        const colored = this.colorPixels(ctxObj);
+                        ctx.putImageData(colored, 0, 0);
+
+                        done(null, tile);
+                    };
+
+                    img.onerror = (e) => done(e, tile);
+                }).catch((e: any) => {
+                    // world load failed; still finish tile so Leaflet doesn't hang
+                    done(e, tile);
                 });
-                const ctxObj: ColorContext = this.buildColorContext(originalData, size.x, size.y, coords);
-                const colored = this.colorPixels(ctxObj);
-                ctx.putImageData(colored, 0, 0);
-
-                done(null, tile);
-            };
-
-            img.onerror = (e) => done(e, tile);
 
             return tile;
         },
 
+        _worldYToLatDeg_webMercator: function (worldY: number, worldHeight: number): number {
+            // worldY in [0, worldHeight)
+            // Map to "global pixel space" at z=0, then invert Web Mercator
+            const yNorm = (worldY + 0.5) / worldHeight;          // 0..1 (pixel center)
+            const mercY = Math.PI * (1 - 2 * yNorm);             // +pi at north edge -> -pi at south edge
+            const latRad = Math.atan(Math.sinh(mercY));          // inverse mercator
+            return (latRad * 180) / Math.PI;
+        },
+
+        deriveEffectiveSeaLevel_global: function (ctx: WorldContext) {
+            const { seaLevel, iceLevel, seaLevelDropDueToIce } = ctx.params;
+
+            const seaDrop = iceLevel * seaLevel * seaLevelDropDueToIce;
+
+            let eff = seaLevel - seaDrop;
+            if (eff < 0) eff = 0;
+            if (eff > 255) eff = 255;
+
+            ctx.derived.effectiveSeaLevel = eff;
+
+        },
+
+        colorPixelsBySeaLevel_global: function (ctx: WorldContext) {
+            const { originalData, width, height } = ctx.inputs;
+            const { isLandMask, heightAboveSea, effectiveSeaLevel } = ctx.derived;
+
+            for (let i = 0, p = 0; i < originalData.length; i += 4, p++) {
+                const elevation = originalData[i];
+
+                if (elevation < effectiveSeaLevel) {
+                    isLandMask[p] = 0;
+                    heightAboveSea[p] = 0;
+                } else {
+                    isLandMask[p] = 1;
+
+                    const h = elevation - effectiveSeaLevel;
+                    heightAboveSea[p] = h > 255 ? 255 : h < 0 ? 0 : h;
+                }
+            }
+        },
+
+        computeMoisture_global: function (ctx: WorldContext) {
+            const { width, height } = ctx.inputs;
+            const { isLandMask, sstByLatitude } = ctx.derived;
+
+            const MAX_SST = 29.5;
+            const MIN_SST = -1.8;
+            const INV_RANGE = 1 / (MAX_SST - MIN_SST);
+
+            // Precompute latitude by WORLD row using Web Mercator inverse
+            const latByRow = new Float32Array(height);
+            for (let gy = 0; gy < height; gy++) {
+                latByRow[gy] = this._worldYToLatDeg_webMercator(gy, height);
+            }
+
+            for (let y = 0; y < height; y++) {
+                const latDeg = latByRow[y];
+                const latRad = (Math.abs(latDeg) * Math.PI) / 180;
+
+                const t = Math.pow(Math.cos(latRad), 1.6);
+                let sst = MIN_SST + (MAX_SST - MIN_SST) * t;
+
+                // subtle NH cooling asymmetry (optional but nice visually)
+                // if (latDeg > 0) {
+                //     sst -= 0.8 * Math.pow(Math.sin(latRad), 1.2);
+                // }
+
+                const sstNorm = clamp01((sst - MIN_SST) * INV_RANGE);
+
+                const rowOff = y * width;
+                for (let x = 0; x < width; x++) {
+                    const idx = rowOff + x;
+                    sstByLatitude[idx] = isLandMask[idx] === 1 ? 0 : sstNorm;
+                }
+            }
+
+            // World-row window chooser (same windowByLatitudeAnchors, just world lat)
+            const getWindowForRow = (y: number, h: number, r: number) => {
+                const latDeg = latByRow[y]; // already computed
+                return windowByLatitudeAnchors(latDeg, r);
+            };
+
+            ctx.derived.moistureAvailability = blurMaskWithSAT_U8(
+                ctx.derived.sstByLatitude,
+                width,
+                height,
+                16,
+                3,
+                getWindowForRow
+            );
+        },
+
+
+        colorPixelsByIce_global: function (ctx: WorldContext) {
+            const { width, height } = ctx.inputs;
+            const {
+                iceLevel,
+                latitudeBiasExponent,
+                elevationOfIce,
+                seaBias,
+                landBias,
+                elevationModifier,
+                dryingOutExponent,
+                moistureBoostBias,
+            } = ctx.params;
+
+            const threshold = 1 - iceLevel;
+
+            const { isLandMask, heightAboveSea, iceMask, moistureAvailability } = ctx.derived;
+
+            // Compute latitude for each WORLD row once (Web Mercator, z=0 pixel space)
+            const latByRow = new Float32Array(height);
+            for (let gy = 0; gy < height; gy++) {
+                latByRow[gy] = this._worldYToLatDeg_webMercator(gy, height);
+            }
+
+            for (let p = 0; p < width * height; p++) {
+                const gy = (p / width) | 0;
+                const latitude = latByRow[gy];
+
+                const latitudeWeighting = Math.pow(Math.abs(latitude) / 90, latitudeBiasExponent);
+
+                const elevation = heightAboveSea[p];
+                const elevationFactor = clamp01(elevation / elevationOfIce);
+                const elevationWeighting = 1 + elevationModifier * elevationFactor;
+
+
+                const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
+
+                const moistureAvailable = moistureAvailability[p] + moistureBoostBias;
+
+                const combined = clamp01(
+                    latitudeWeighting * elevationWeighting * landWeighting * moistureAvailable
+                );
+
+                ctx.outputs.latitudeWeighting[p] = latitudeWeighting;
+                ctx.outputs.elevationWeighting[p] = elevationWeighting;
+                ctx.outputs.landWeighting[p] = landWeighting;
+                ctx.outputs.moistureAvailable[p] = moistureAvailable;
+                ctx.outputs.combined[p] = combined;
+                ctx.outputs.threshold[p] = threshold;
+
+                iceMask[p] = combined > threshold ? 1 : 0;
+            }
+        },
+
+        recomputeWorldDerived: function () {
+            if (!this._world) return;
+
+            // Always keep params reference fresh (in case setParams mutated this.params)
+            this._world.params = this.params;
+
+            // Keep effectiveSeaLevel initialized
+            //   this._world.derived.effectiveSeaLevel = this.params.seaLevel;
+
+            this.deriveEffectiveSeaLevel_global(this._world);
+            this.colorPixelsBySeaLevel_global(this._world);
+            this.computeMoisture_global(this._world);
+            this.colorPixelsByIce_global(this._world);
+
+        },
+
+        _tilePixelToWorldIndex_z0: function (
+            coords: L.Coords,
+            px: number,
+            py: number,
+            worldW: number,
+            worldH: number
+        ): number {
+            // find in absolute tile space which pixel im in
+            const worldPx = (coords.x << 8) + px; // coords.x * 256 + px
+            const worldPy = (coords.y << 8) + py; // coords.y * 256 + py
+
+            // find what pixel this corresponds to at z=0
+            const shift = coords.z | 0;
+            const gx = worldPx >> shift;
+            const gy = worldPy >> shift;
+
+            // Clamp just in case (shouldn’t be needed in ideal world, but keeps it safe)
+            const cx = gx < 0 ? 0 : gx >= worldW ? worldW - 1 : gx;
+            const cy = gy < 0 ? 0 : gy >= worldH ? worldH - 1 : gy;
+
+            return cy * worldW + cx;
+        },
+
+        writeColorToPixels_global: function (
+            coords: L.Coords,
+            tileW: number,
+            tileH: number
+        ): ImageData {
+            if (!this._world) {
+                return new ImageData(tileW, tileH);
+            }
+
+            const world = this._world;
+            const { width: worldW, height: worldH, originalData: worldRGBA } = world.inputs;
+            const { seaLevel } = world.params;
+            const { isLandMask, iceMask, moistureAvailability } = world.derived;
+
+            const debug = false; // keep your moisture debug toggle
+
+            const imageData = new ImageData(tileW, tileH);
+            const data = imageData.data;
+
+            // Walk tile pixels
+            for (let py = 0; py < tileH; py++) {
+                for (let px = 0; px < tileW; px++) {
+                    const tIndex = py * tileW + px;
+                    const di = tIndex * 4;
+
+                    const wIndex = this._tilePixelToWorldIndex_z0(coords, px, py, worldW, worldH);
+
+                    const elevation = worldRGBA[wIndex * 4]; // red channel as before
+
+                    let r: number, g: number, b: number;
+
+                    if (iceMask[wIndex] === 1) {
+                        [r, g, b] = iceColor();
+                    } else if (isLandMask[wIndex] === 1) {
+                        [r, g, b] = landColor(elevation);
+                    } else {
+                        [r, g, b] = waterColor(elevation, seaLevel);
+                    }
+
+                    if (debug) {
+                        const m = moistureAvailability[wIndex]; // assumed 0..1
+                        r = Math.round(m * 255);
+                        g = 0;
+                        b = 0;
+                    }
+
+                    data[di] = r | 0;
+                    data[di + 1] = g | 0;
+                    data[di + 2] = b | 0;
+                    data[di + 3] = 255;
+                }
+            }
+
+            return imageData;
+        },
+
+
         setParams: function (partial: Partial<RecolorParams>) {
-            Object.assign(this.params, partial);
-            this._recolorAllTiles();
+            let useNewPath = true;
+
+            if (!useNewPath) {
+                Object.assign(this.params, partial);
+                this._recolorAllTiles();
+            } else {
+                Object.assign(this.params, partial);
+
+                // Ensure world exists (async) then recompute + repaint
+                this._ensureWorldBaseLoaded()
+                    .then(() => {
+                        this.recomputeWorldDerived();
+                        this._recolorAllTiles_global();
+                    })
+                    .catch((e: any) => {
+                        // Optional: surface error
+                        console.error("setParams world load failed", e);
+                    });
+            }
+
         },
 
         _recolorAllTiles: function () {
@@ -383,6 +819,26 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             });
         },
 
+        _recolorAllTiles_global: function () {
+            const tilesObj = (this as any)._tiles as Record<string, { el: HTMLElement }>;
+            if (!tilesObj) return;
+
+            Object.values(tilesObj).forEach(({ el }) => {
+                if (!(el instanceof HTMLCanvasElement)) return;
+
+                // For the global pipeline, we still need ctx + coords + size.
+                // If you kept _tileStore for now, use it:
+                const rec = this._tileStore.get(el);
+                if (!rec) return;
+
+                const { ctx, width, height, coords } = rec;
+
+                const colored = this.writeColorToPixels_global(coords, width, height);
+                ctx.putImageData(colored, 0, 0);
+            });
+        },
+
+
         // Optional: keep memory tidy when Leaflet unloads tiles
         // (WeakMap already helps, but this is still nice)
         _removeTile: function (key: string) {
@@ -393,7 +849,73 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             }
             return (L.GridLayer.prototype as any)._removeTile.call(this, key);
         },
+
+        getInfoAtPoint: function (latlng: L.LatLng): LayerClickResult | null {
+            const map = getMap();
+            if (!map) return null;
+            if (!this._world) return null;
+
+            const world = this._world;
+            const z = map.getZoom();
+            const tileSize = this.getTileSize().x; // assume square
+
+            const p = map.project(latlng, z); // world pixel coords at zoom z
+
+            const tileX = Math.floor(p.x / tileSize);
+            const tileY = Math.floor(p.y / tileSize);
+            const px = Math.floor(p.x - tileX * tileSize);
+            const py = Math.floor(p.y - tileY * tileSize);
+
+            // const coords = new L.Coords(tileX, tileY, z);
+            const coords: L.Coords = { x: tileX, y: tileY, z: z } as L.Coords;
+
+            const worldW = world.inputs.width;
+            const worldH = world.inputs.height;
+
+            const wIndex = this._tilePixelToWorldIndex_z0(coords, px, py, worldW, worldH);
+
+            const gx = wIndex % worldW;
+            const gy = (wIndex / worldW) | 0;
+
+            const latitudeDeg = this._worldYToLatDeg_webMercator(gy, worldH);
+            const longitudeDeg = (gx / worldW) * 360 - 180;
+
+
+            const out = world.outputs;
+            const der = world.derived;
+
+            const combined = out.combined[wIndex];
+            const threshold = out.threshold[wIndex];
+
+            return {
+                latlng,
+                zoom: z,
+                tile: { x: tileX, y: tileY, z },
+                tilePixel: { x: px, y: py },
+                worldIndex: wIndex,
+                gx,
+                gy,
+
+                worldLat: latitudeDeg,
+                worldLng: longitudeDeg,
+
+                latitudeWeighting: out.latitudeWeighting[wIndex],
+                elevationWeighting: out.elevationWeighting[wIndex],
+                landWeighting: out.landWeighting[wIndex],
+                moistureAvailable: out.moistureAvailable[wIndex],
+                combined,
+                threshold,
+                ice: combined > threshold,
+
+                isLand: der.isLandMask[wIndex],
+                heightAboveSea: der.heightAboveSea[wIndex],
+                moistureAvailability: der.moistureAvailability[wIndex],
+            };
+        },
+
     });
+
+
 
 
     // instantiate and return

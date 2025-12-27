@@ -81,6 +81,46 @@ export function rectAvgFromSAT(
   return sum / area;
 }
 
+function modWrap(x: number, m: number) {
+  const r = x % m;
+  return r < 0 ? r + m : r;
+}
+
+/**
+ * Average over a rectangle window where X wraps (longitude),
+ * Y does NOT wrap (latitude) — we clamp Y.
+ * in case we have a wrapping we break it into 2 rectangles the part before and after the wrapping then average those together
+ */
+export function rectAvgFromSAT_WrapX(
+  sat: Float32Array,
+  w: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number
+): number {
+  // (Optional but recommended) safety swaps:
+  if (x0 > x1) { const t = x0; x0 = x1; x1 = t; }
+  if (y0 > y1) { const t = y0; y0 = y1; y1 = t; }
+
+  const a0 = modWrap(x0, w);
+  const a1 = modWrap(x1, w);
+
+  if (a0 <= a1) {
+    const sum = rectSumSAT(sat, w, a0, y0, a1, y1);
+    const area = (y1 - y0 + 1) * (a1 - a0 + 1);
+    return sum / area;
+  } else {
+    const sum1 = rectSumSAT(sat, w, a0, y0, w - 1, y1);
+    const sum2 = rectSumSAT(sat, w, 0,  y0, a1,   y1);
+    const area1 = (y1 - y0 + 1) * (w - a0);
+    const area2 = (y1 - y0 + 1) * (a1 + 1);
+    return (sum1 + sum2) / (area1 + area2);
+  }
+}
+
+
+
 /**
  * This is “the blur”.
  *
@@ -139,14 +179,14 @@ export function blurMaskWithSAT_U8(
         if (x0 > x1) { const t = x0; x0 = x1; x1 = t; }
         if (y0 > y1) { const t = y0; y0 = y1; y1 = t; }
 
-        // Clamp to map edges (same “repeat edge” vibe as your old blur)
-        x0 = clamp(x0, 0, w - 1);
-        x1 = clamp(x1, 0, w - 1);
+        // we allow x to wrap around, but not y. we care more about longitude wrapping than latitude for now
+        // if this changes we change this and the rectAvgFromSAT_WrapX func
         y0 = clamp(y0, 0, h - 1);
         y1 = clamp(y1, 0, h - 1);
 
         // Average over that rectangle using SAT (fast, constant-time)
-        dst[y * w + x] = rectAvgFromSAT(sat, w, x0, y0, x1, y1);
+        // dst[y * w + x] = rectAvgFromSAT(sat, w, x0, y0, x1, y1);
+        dst[y * w + x] = rectAvgFromSAT_WrapX(sat, w, x0, y0, x1, y1);
       }
     }
 
@@ -189,8 +229,7 @@ function lerp(a: number, b: number, t: number) {
  * - SH mid -> pixel bottom-right of box
  * - near poles -> centered box
  *
- * NOTE: dy assumes screen coords where y increases downward.
- * If your y increases upward, swap dy signs (or swap the NH/SH dy cases).
+ * TODO: currently radius does not vary with latitude. not big deal for visual realism but exists
  */
 export function windowByLatitudeAnchors(latDeg: number, r: number): WindowSpec {
   const a = Math.abs(latDeg);

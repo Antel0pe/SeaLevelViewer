@@ -24,6 +24,7 @@ export default function Home() {
 
     seaLevelDropDueToIce: 0.05,
     dryingOutExponent: 2,
+    moistureBoostBias: 0.85,
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -50,6 +51,15 @@ export default function Home() {
           step={0.01}
           value={params.iceLevel}
           onChange={(v) => setParams((p) => ({ ...p, iceLevel: v }))}
+        />
+
+        <Slider
+          label={`Moisture Boost Bias: ${Math.round(params.moistureBoostBias * 100)}%`}
+          min={0}
+          max={2}
+          step={0.01}
+          value={params.moistureBoostBias}
+          onChange={(v) => setParams((p) => ({ ...p, moistureBoostBias: v }))}
         />
 
         <div className="mt-6 select-none">
