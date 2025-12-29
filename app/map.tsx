@@ -26,7 +26,7 @@ export default function TopographyMap({ params }: MapProps) {
             getMap: () => mapRef.current,
             tileUrl: (coords) => {
                 const tmsY = (1 << coords.z) - 1 - coords.y;
-                return `/tiles/${coords.z}/${coords.x}/${tmsY}.png`;
+                return `/${process.env.NEXT_PUBLIC_TOPOGRAPHY_TILE_URL}/${coords.z}/${coords.x}/${tmsY}.png`;
             },
             initial: params,
         });
