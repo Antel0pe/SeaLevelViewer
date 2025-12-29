@@ -16,7 +16,7 @@ export default function Home() {
     seaLevel: 142,
     iceLevel: 0.33,
 
-    latitudeBiasExponent: 2,
+    latitudeBiasExponent: 1,
     elevationOfIce: 3000,
     seaBias: 0.7,
     landBias: 1.0,
@@ -24,7 +24,11 @@ export default function Home() {
 
     seaLevelDropDueToIce: 0.05,
     dryingOutExponent: 2,
-    moistureBoostBias: 0.85,
+    moistureBias: 0.0,
+    moistureScale: 1.2,
+
+    continentalBias: 0.0,
+    continentalScale: 1.0,
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -54,12 +58,39 @@ export default function Home() {
         />
 
         <Slider
-          label={`Moisture Boost Bias: ${Math.round(params.moistureBoostBias * 100)}%`}
-          min={0}
+          label={`Moisture Bias: ${params.moistureBias.toFixed(2)}`}
+          min={-1}
           max={2}
           step={0.01}
-          value={params.moistureBoostBias}
-          onChange={(v) => setParams((p) => ({ ...p, moistureBoostBias: v }))}
+          value={params.moistureBias}
+          onChange={(v) => setParams((p) => ({ ...p, moistureBias: v }))}
+        />
+
+        <Slider
+          label={`Moisture Scale: ${params.moistureScale.toFixed(2)}`}
+          min={0}
+          max={3}
+          step={0.01}
+          value={params.moistureScale}
+          onChange={(v) => setParams((p) => ({ ...p, moistureScale: v }))}
+        />
+
+        <Slider
+          label={`Continental Bias: ${params.continentalBias.toFixed(2)}`}
+          min={-1}
+          max={2}
+          step={0.01}
+          value={params.continentalBias}
+          onChange={(v) => setParams((p) => ({ ...p, continentalBias: v }))}
+        />
+
+        <Slider
+          label={`Continental Scale: ${params.continentalScale.toFixed(2)}`}
+          min={0}
+          max={3}
+          step={0.01}
+          value={params.continentalScale}
+          onChange={(v) => setParams((p) => ({ ...p, continentalScale: v }))}
         />
 
         <div className="mt-6 select-none">

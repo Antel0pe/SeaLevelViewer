@@ -1,6 +1,6 @@
 import { tileRowToLat } from "./utils";
 
-type WindowSpec = {
+export type WindowSpec = {
   // Inclusive offsets relative to the current pixel (x,y)
   // Example centered box: dx0=-r, dx1=+r, dy0=-r, dy1=+r
   dx0: number; dx1: number;

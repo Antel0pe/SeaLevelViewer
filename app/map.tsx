@@ -59,6 +59,10 @@ export default function TopographyMap({ params }: MapProps) {
       <div><b>elevationWeighting</b>: ${res.elevationWeighting.toFixed(4)} (h=${res.heightAboveSea})</div>
       <div><b>landWeighting</b>: ${res.landWeighting.toFixed(4)} (isLand=${res.isLand})</div>
       <div><b>moistureAvailable</b>: ${res.moistureAvailable.toFixed(4)} (raw=${res.moistureAvailability.toFixed(4)})</div>
+            <div><b>Continental Factor</b>: ${res.continentalFactor.toFixed(4)} (raw=${res.continentalValue.toFixed(4)})</div>
+            <div><b>thermalGate</b>: ${res.thermalGate.toFixed(4)}</div>
+<div><b>effectiveAccumulation</b>: ${res.effectiveAccumulation.toFixed(4)}</div>
+
       <div><b>combined</b>: ${res.combined.toFixed(4)}</div>
       <div><b>threshold</b>: ${res.threshold.toFixed(4)}</div>
       <div><b>ice</b>: ${res.ice ? "YES" : "no"}</div>
