@@ -617,7 +617,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 //     sst -= 0.8 * Math.pow(Math.sin(latRad), 1.2);
                 // }
 
-                const sstNorm = clamp01((sst - MIN_SST) * INV_RANGE);
+                let sstNorm = clamp01((sst - MIN_SST) * INV_RANGE);
 
                 const rowOff = y * width;
                 for (let x = 0; x < width; x++) {
@@ -690,46 +690,132 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 latByRow[gy] = this._worldYToLatDeg_webMercator(gy, height);
             }
 
+            // for (let p = 0; p < width * height; p++) {
+            //     const gy = (p / width) | 0;
+            //     const latitude = latByRow[gy];
+
+            //     // let latitudeWeighting = Math.pow(Math.abs(latitude) / 90, latitudeBiasExponent);
+            //     // const latitudeWeighting = 1 - Math.cos(Math.abs(latitude) * Math.PI / 180);
+            //     const x = Math.abs(latitude); // degrees
+            //     const k = 0.1;
+            //     const t = 45;
+
+            //     const latitudeWeighting =
+            //         1 / (1 + Math.exp(-k * (x - t)));
+
+
+            //     const elevation = heightAboveSea[p];
+            //     const elevationFactor = clamp01(elevation / elevationOfIce);
+            //     const elevationWeighting = 1 + elevationModifier * elevationFactor;
+
+
+            //     const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
+
+            //     const moistureAvailable =
+            //         (moistureAvailability[p] * moistureScale) + moistureBias;
+
+            //     const continentalFactor =
+            //         ((continentalValue[p] * continentalScale) + continentalBias) * clamp01(1 - latitudeWeighting);
+            //     // const continentalFactor =
+            //     //     (continentalValue[p] * continentalScale) + continentalBias;
+
+            //     const thermalGate = latitudeWeighting * elevationWeighting * landWeighting;
+
+            //     // accumulation minus summer melt
+            //     let effectiveAccumulation = moistureAvailable - continentalFactor;
+            //     const maxBoost = 1.0;                 // sets “0.03 -> at least ~1” at l≈1
+            //     const B = maxBoost * Math.pow(latitudeWeighting, 7); // how much latitude can add at most
+            //     const tau = 0.003 + 0.05 * (1 - Math.pow(latitudeWeighting, 4)); // small at poles, larger at low l
+
+            //     effectiveAccumulation = effectiveAccumulation + B * (1 - Math.exp(-effectiveAccumulation / tau));
+            //     // ice potential
+            //     // const combined = clamp01(
+            //     //     thermalGate * effectiveAccumulation
+            //     // );
+            //     const combined = clamp01(
+            //         thermalGate * (1 - continentalFactor)
+            //     );
+
+            //     ctx.outputs.latitudeWeighting[p] = latitudeWeighting;
+            //     ctx.outputs.elevationWeighting[p] = elevationWeighting;
+            //     ctx.outputs.landWeighting[p] = landWeighting;
+            //     ctx.outputs.moistureAvailable[p] = moistureAvailable;
+            //     ctx.outputs.combined[p] = combined;
+            //     ctx.outputs.threshold[p] = threshold;
+            //     ctx.outputs.continentalFactor[p] = continentalFactor;
+            //     ctx.outputs.thermalGate[p] = thermalGate;
+            //     ctx.outputs.effectiveAccumulation[p] = effectiveAccumulation;
+
+
+            //     iceMask[p] = combined > threshold ? 1 : 0;
+            // }
             for (let p = 0; p < width * height; p++) {
                 const gy = (p / width) | 0;
                 const latitude = latByRow[gy];
 
-                // let latitudeWeighting = Math.pow(Math.abs(latitude) / 90, latitudeBiasExponent);
-                // const latitudeWeighting = 1 - Math.cos(Math.abs(latitude) * Math.PI / 180);
+                // const x = Math.abs(latitude); // degrees
+                // const latitudeWeighting = clamp01(x / 90);
                 const x = Math.abs(latitude); // degrees
-                const k = 0.1;
-                const t = 45;
-
-                const latitudeWeighting =
-                    1 / (1 + Math.exp(-k * (x - t)));
+                const latitudeWeighting = Math.sin((x * Math.PI) / 180);
 
 
                 const elevation = heightAboveSea[p];
                 const elevationFactor = clamp01(elevation / elevationOfIce);
+
+                // keep this for output/debug, but we won't use it as a multiplicative gate anymore
                 const elevationWeighting = 1 + elevationModifier * elevationFactor;
 
-
+                // keep existing land weighting (user-controlled), but treat it as a *melt* modifier (small term)
                 const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
 
+                // --- ACCUMULATION (only moisture) ---
                 const moistureAvailable =
                     (moistureAvailability[p] * moistureScale) + moistureBias;
 
+                // clamp to a usable 0..1 accumulation signal (you can remove clamp if you want >1 to mean "very wet")
+                // const accum = clamp01(moistureAvailable);
+                const accum = moistureAvailable;
+
+                // --- MELT PRESSURE (weighted sum, latitude-dominant) ---
+                // convert "coldness" into "meltiness": high near equator, low near poles
+                const latMelt = 1 - latitudeWeighting;
+
+                // continentalness: already scaled/bias'd, and damped by (1 - latitudeWeighting) in your code.
+                // Keep that idea so continental can't veto poles.
                 const continentalFactor =
-                    ((continentalValue[p] * continentalScale) + continentalBias) * clamp01(1 - latitudeWeighting);
+                    ((continentalValue[p] * continentalScale) + continentalBias);
 
-                const thermalGate = latitudeWeighting * elevationWeighting * landWeighting;
+                // treat landWeighting as a small melt-side modifier; keep it bounded
+                const landMelt = clamp01(landWeighting);
 
-                // accumulation minus summer melt
-                let effectiveAccumulation = moistureAvailable - continentalFactor;
-                const maxBoost = 1.0;                 // sets “0.03 -> at least ~1” at l≈1
-                const B = maxBoost * Math.pow(latitudeWeighting, 7); // how much latitude can add at most
-                const tau = 0.003 + 0.05 * (1 - Math.pow(latitudeWeighting, 4)); // small at poles, larger at low l
+                // elevation reduces melt (cooling). Use elevationFactor directly as the cooling term.
+                const elevCooling = elevationFactor;
 
-                effectiveAccumulation = effectiveAccumulation + B * (1 - Math.exp(-effectiveAccumulation / tau));
-                // ice potential
-                const combined = clamp01(
-                    thermalGate * effectiveAccumulation
+                // weights: latitude should dominate; others are small nudges
+                const wLat = 0.9;
+                const wCont = 0.2;
+                const wLand = 0.15;
+                const wElev = 0.15;
+                let meltPressure = (
+                    wLat * latMelt
+                    + wCont * continentalFactor
+                    + wLand * landMelt
+                    - wElev * elevCooling
                 );
+
+                meltPressure = clamp01(meltPressure);
+
+                // global melt scale (your ice slider): lower => less melt => more ice.
+                // Reuse `threshold` as this scale without renaming.
+                const globalMelt = clamp01(threshold);
+                meltPressure *= globalMelt;
+
+                // --- DECISION ---
+                // ice if accumulation beats melt pressure
+                let effectiveAccumulation = accum;
+                const thermalGate = meltPressure; // no longer a multiplicative gate; keep output slot stable
+
+                const combined = clamp01(effectiveAccumulation - meltPressure);
 
                 ctx.outputs.latitudeWeighting[p] = latitudeWeighting;
                 ctx.outputs.elevationWeighting[p] = elevationWeighting;
@@ -741,9 +827,9 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 ctx.outputs.thermalGate[p] = thermalGate;
                 ctx.outputs.effectiveAccumulation[p] = effectiveAccumulation;
 
-
-                iceMask[p] = combined > threshold ? 1 : 0;
+                iceMask[p] = (effectiveAccumulation > meltPressure) ? 1 : 0;
             }
+
         },
 
         recomputeWorldDerived: function () {

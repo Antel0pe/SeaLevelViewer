@@ -19,15 +19,15 @@ export default function Home() {
     latitudeBiasExponent: 1,
     elevationOfIce: 3000,
     seaBias: 0.7,
-    landBias: 1.0,
+    landBias: 0.0,
     elevationModifier: 10.0,
 
     seaLevelDropDueToIce: 0.05,
     dryingOutExponent: 2,
-    moistureBias: 0.0,
-    moistureScale: 1.2,
+    moistureBias: 0.1,
+    moistureScale: 0.2,
 
-    continentalBias: 0.0,
+    continentalBias: 0.12,
     continentalScale: 1.0,
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
