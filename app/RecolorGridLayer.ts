@@ -11,23 +11,23 @@ type TileRecord = {
     coords: L.Coords;
 };
 
-type ColorContext = {
-    inputs: {
-        originalData: Uint8ClampedArray;
-        width: number;
-        height: number;
-        coords: L.Coords;
-    };
-    params: RecolorParams
-    derived: {
-        isLandMask: Uint8Array;          // 0 sea, 1 land
-        heightAboveSea: Uint8Array;      // 0 for sea, else (elev - seaLevel)
-        iceMask: Uint8Array;
-        effectiveSeaLevel: number;
-        moistureAvailability: Float32Array;
-        sstByLatitude: Float32Array;
-    };
-};
+// type ColorContext = {
+//     inputs: {
+//         originalData: Uint8ClampedArray;
+//         width: number;
+//         height: number;
+//         coords: L.Coords;
+//     };
+//     params: RecolorParams
+//     derived: {
+//         isLandMask: Uint8Array;          // 0 sea, 1 land
+//         heightAboveSea: Uint8Array;      // 0 for sea, else (elev - seaLevel)
+//         iceMask: Uint8Array;
+//         effectiveSeaLevel: number;
+//         moistureAvailability: Float32Array;
+//         sstByLatitude: Float32Array;
+//     };
+// };
 
 type WorldContext = {
     inputs: {
@@ -129,9 +129,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
         tileUrl,
         initial = {},
     } = opts;
-
-
-
 
     const lerp = (a: number, b: number, threshold: number) =>
         a + (b - a) * threshold;
@@ -515,33 +512,33 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                         return;
                     }
 
-                    const img = new Image();
-                    img.crossOrigin = "anonymous";
+                    // const img = new Image();
+                    // img.crossOrigin = "anonymous";
 
-                    img.src = tileUrl(coords);
+                    // img.src = tileUrl(coords);
 
-                    img.onload = () => {
-                        ctx.drawImage(img, 0, 0, size.x, size.y);
+                    // img.onload = () => {
+                    //     ctx.drawImage(img, 0, 0, size.x, size.y);
 
-                        const src = ctx.getImageData(0, 0, size.x, size.y);
-                        const originalData = new Uint8ClampedArray(src.data);
+                    //     const src = ctx.getImageData(0, 0, size.x, size.y);
+                    //     const originalData = new Uint8ClampedArray(src.data);
 
-                        // Store by the actual canvas element
-                        this._tileStore.set(tile, {
-                            ctx,
-                            width: size.x,
-                            height: size.y,
-                            originalData,
-                            coords
-                        });
-                        const ctxObj: ColorContext = this.buildColorContext(originalData, size.x, size.y, coords);
-                        const colored = this.colorPixels(ctxObj);
-                        ctx.putImageData(colored, 0, 0);
+                    //     // Store by the actual canvas element
+                    //     this._tileStore.set(tile, {
+                    //         ctx,
+                    //         width: size.x,
+                    //         height: size.y,
+                    //         originalData,
+                    //         coords
+                    //     });
+                    //     const ctxObj: ColorContext = this.buildColorContext(originalData, size.x, size.y, coords);
+                    //     const colored = this.colorPixels(ctxObj);
+                    //     ctx.putImageData(colored, 0, 0);
 
-                        done(null, tile);
-                    };
+                    //     done(null, tile);
+                    // };
 
-                    img.onerror = (e) => done(e, tile);
+                    // img.onerror = (e) => done(e, tile);
                 }).catch((e: any) => {
                     // world load failed; still finish tile so Leaflet doesn't hang
                     done(e, tile);
@@ -599,30 +596,23 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const MIN_SST = -1.8;
             const INV_RANGE = 1 / (MAX_SST - MIN_SST);
 
-            // Precompute latitude by WORLD row using Web Mercator inverse
+                        // Precompute latitude by WORLD row using Web Mercator inverse
             const latByRow = new Float32Array(height);
             for (let gy = 0; gy < height; gy++) {
                 latByRow[gy] = this._worldYToLatDeg_webMercator(gy, height);
             }
 
+            // vaporCapacity(lat) = clamp01(cos(|lat|))  (ocean-only)
             for (let y = 0; y < height; y++) {
                 const latDeg = latByRow[y];
                 const latRad = (Math.abs(latDeg) * Math.PI) / 180;
 
-                const t = Math.pow(Math.cos(latRad), 1.6);
-                let sst = MIN_SST + (MAX_SST - MIN_SST) * t;
-
-                // subtle NH cooling asymmetry (optional but nice visually)
-                // if (latDeg > 0) {
-                //     sst -= 0.8 * Math.pow(Math.sin(latRad), 1.2);
-                // }
-
-                let sstNorm = clamp01((sst - MIN_SST) * INV_RANGE);
+                const vaporCap = clamp01(Math.cos(latRad));
 
                 const rowOff = y * width;
                 for (let x = 0; x < width; x++) {
                     const idx = rowOff + x;
-                    sstByLatitude[idx] = isLandMask[idx] === 1 ? 0 : sstNorm;
+                    sstByLatitude[idx] = isLandMask[idx] === 1 ? 0 : vaporCap;
                 }
             }
 
@@ -658,11 +648,117 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 getCenteredWindowForRow
             );
 
-
         },
 
 
-        colorPixelsByIce_global: function (ctx: WorldContext) {
+        // colorPixelsByIce_global: function (ctx: WorldContext) {
+        //     const { width, height } = ctx.inputs;
+        //     const {
+        //         iceLevel,
+        //         latitudeBiasExponent,
+        //         elevationOfIce,
+        //         seaBias,
+        //         landBias,
+        //         elevationModifier,
+        //         dryingOutExponent,
+
+        //         moistureBias,
+        //         moistureScale,
+
+        //         continentalBias,
+        //         continentalScale,
+        //     } = ctx.params;
+
+        //     const threshold = 1 - iceLevel;
+
+        //     const { isLandMask, heightAboveSea, iceMask, moistureAvailability, continentalValue } = ctx.derived;
+
+        //     // Compute latitude for each WORLD row once (Web Mercator, z=0 pixel space)
+        //     const latByRow = new Float32Array(height);
+        //     for (let gy = 0; gy < height; gy++) {
+        //         latByRow[gy] = this._worldYToLatDeg_webMercator(gy, height);
+        //     }
+
+        //     for (let p = 0; p < width * height; p++) {
+        //         const gy = (p / width) | 0;
+        //         const latitude = latByRow[gy];
+
+        //         const x = Math.abs(latitude); // degrees
+        //         const latitudeWeighting = Math.sin((x * Math.PI) / 180);
+
+        //         const elevation = heightAboveSea[p];
+        //         const elevationFactor = clamp01(elevation / elevationOfIce);
+
+        //         // keep this for output/debug, but we won't use it as a multiplicative gate anymore
+        //         const elevationWeighting = 1 + elevationModifier * elevationFactor;
+
+        //         // keep existing land weighting (user-controlled), but treat it as a *melt* modifier (small term)
+        //         const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
+
+        //         // --- ACCUMULATION (only moisture) ---
+        //         const moistureAvailable =
+        //             (moistureAvailability[p] * moistureScale) + moistureBias;
+
+        //         // clamp to a usable 0..1 accumulation signal (you can remove clamp if you want >1 to mean "very wet")
+        //         // const accum = clamp01(moistureAvailable);
+        //         const accum = moistureAvailable;
+
+        //         // --- MELT PRESSURE (weighted sum, latitude-dominant) ---
+        //         // convert "coldness" into "meltiness": high near equator, low near poles
+        //         const latMelt = 1 - latitudeWeighting;
+
+        //         // continentalness: already scaled/bias'd, and damped by (1 - latitudeWeighting) in your code.
+        //         // Keep that idea so continental can't veto poles.
+        //         const continentalFactor =
+        //             ((continentalValue[p] * continentalScale) + continentalBias);
+
+        //         // treat landWeighting as a small melt-side modifier; keep it bounded
+        //         const landMelt = clamp01(landWeighting);
+
+        //         // elevation reduces melt (cooling). Use elevationFactor directly as the cooling term.
+        //         const elevCooling = elevationFactor;
+
+        //         // weights: latitude should dominate; others are small nudges
+        //         const wLat = 0.9;
+        //         const wCont = 0.2;
+        //         const wLand = 0.15;
+        //         const wElev = 0.15;
+        //         let meltPressure = (
+        //             wLat * latMelt
+        //             + wCont * continentalFactor
+        //             + wLand * landMelt
+        //             - wElev * elevCooling
+        //         );
+
+        //         meltPressure = clamp01(meltPressure);
+
+        //         // global melt scale (your ice slider): lower => less melt => more ice.
+        //         // Reuse `threshold` as this scale without renaming.
+        //         const globalMelt = clamp01(threshold);
+        //         meltPressure *= globalMelt;
+
+        //         // --- DECISION ---
+        //         // ice if accumulation beats melt pressure
+        //         let effectiveAccumulation = accum;
+        //         const thermalGate = meltPressure; // no longer a multiplicative gate; keep output slot stable
+
+        //         const combined = clamp01(effectiveAccumulation - meltPressure);
+
+        //         ctx.outputs.latitudeWeighting[p] = latitudeWeighting;
+        //         ctx.outputs.elevationWeighting[p] = elevationWeighting;
+        //         ctx.outputs.landWeighting[p] = landWeighting;
+        //         ctx.outputs.moistureAvailable[p] = moistureAvailable;
+        //         ctx.outputs.combined[p] = combined;
+        //         ctx.outputs.threshold[p] = threshold;
+        //         ctx.outputs.continentalFactor[p] = continentalFactor;
+        //         ctx.outputs.thermalGate[p] = thermalGate;
+        //         ctx.outputs.effectiveAccumulation[p] = effectiveAccumulation;
+
+        //         iceMask[p] = (effectiveAccumulation > meltPressure) ? 1 : 0;
+        //     }
+
+        // },
+                colorPixelsByIce_global: function (ctx: WorldContext) {
             const { width, height } = ctx.inputs;
             const {
                 iceLevel,
@@ -680,9 +776,23 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 continentalScale,
             } = ctx.params;
 
+            // Keep this for UI/debug continuity (even though we no longer use it as a melt scale)
             const threshold = 1 - iceLevel;
 
             const { isLandMask, heightAboveSea, iceMask, moistureAvailability, continentalValue } = ctx.derived;
+
+            // --- Temperature model constants (°C-like units) ---
+            // These are intended as reasonable defaults; tune as needed.
+            const A = 20;     // mean equator-to-pole contrast
+            const L = 6.5;    // °C per km lapse rate
+            const S = 12;     // seasonal amplitude scale
+            const C = 8;      // summer continental warming scale
+            const DELTA = 8;  // max global cooling at iceLevel=1
+            const ELEV_KM_MAX = 5;   // maps elevationFactor (0..1) to 0..5 km
+
+            // Melt conversion: converts °C-like summer warmth into "ice units" comparable to accum
+            // Since accum can be >1 if you bias/scale moisture, keep this small.
+            const k = 1 / 20;
 
             // Compute latitude for each WORLD row once (Web Mercator, z=0 pixel space)
             const latByRow = new Float32Array(height);
@@ -690,147 +800,106 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 latByRow[gy] = this._worldYToLatDeg_webMercator(gy, height);
             }
 
-            // for (let p = 0; p < width * height; p++) {
-            //     const gy = (p / width) | 0;
-            //     const latitude = latByRow[gy];
-
-            //     // let latitudeWeighting = Math.pow(Math.abs(latitude) / 90, latitudeBiasExponent);
-            //     // const latitudeWeighting = 1 - Math.cos(Math.abs(latitude) * Math.PI / 180);
-            //     const x = Math.abs(latitude); // degrees
-            //     const k = 0.1;
-            //     const t = 45;
-
-            //     const latitudeWeighting =
-            //         1 / (1 + Math.exp(-k * (x - t)));
-
-
-            //     const elevation = heightAboveSea[p];
-            //     const elevationFactor = clamp01(elevation / elevationOfIce);
-            //     const elevationWeighting = 1 + elevationModifier * elevationFactor;
-
-
-            //     const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
-
-            //     const moistureAvailable =
-            //         (moistureAvailability[p] * moistureScale) + moistureBias;
-
-            //     const continentalFactor =
-            //         ((continentalValue[p] * continentalScale) + continentalBias) * clamp01(1 - latitudeWeighting);
-            //     // const continentalFactor =
-            //     //     (continentalValue[p] * continentalScale) + continentalBias;
-
-            //     const thermalGate = latitudeWeighting * elevationWeighting * landWeighting;
-
-            //     // accumulation minus summer melt
-            //     let effectiveAccumulation = moistureAvailable - continentalFactor;
-            //     const maxBoost = 1.0;                 // sets “0.03 -> at least ~1” at l≈1
-            //     const B = maxBoost * Math.pow(latitudeWeighting, 7); // how much latitude can add at most
-            //     const tau = 0.003 + 0.05 * (1 - Math.pow(latitudeWeighting, 4)); // small at poles, larger at low l
-
-            //     effectiveAccumulation = effectiveAccumulation + B * (1 - Math.exp(-effectiveAccumulation / tau));
-            //     // ice potential
-            //     // const combined = clamp01(
-            //     //     thermalGate * effectiveAccumulation
-            //     // );
-            //     const combined = clamp01(
-            //         thermalGate * (1 - continentalFactor)
-            //     );
-
-            //     ctx.outputs.latitudeWeighting[p] = latitudeWeighting;
-            //     ctx.outputs.elevationWeighting[p] = elevationWeighting;
-            //     ctx.outputs.landWeighting[p] = landWeighting;
-            //     ctx.outputs.moistureAvailable[p] = moistureAvailable;
-            //     ctx.outputs.combined[p] = combined;
-            //     ctx.outputs.threshold[p] = threshold;
-            //     ctx.outputs.continentalFactor[p] = continentalFactor;
-            //     ctx.outputs.thermalGate[p] = thermalGate;
-            //     ctx.outputs.effectiveAccumulation[p] = effectiveAccumulation;
-
-
-            //     iceMask[p] = combined > threshold ? 1 : 0;
-            // }
             for (let p = 0; p < width * height; p++) {
                 const gy = (p / width) | 0;
                 const latitude = latByRow[gy];
 
-                // const x = Math.abs(latitude); // degrees
-                // const latitudeWeighting = clamp01(x / 90);
                 const x = Math.abs(latitude); // degrees
-                const latitudeWeighting = Math.sin((x * Math.PI) / 180);
+                const latRad = (x * Math.PI) / 180;
 
+                // Keep your existing debug-style "latitudeWeighting" variable
+                // (you can later reinterpret this in UI if you want)
+                const latitudeWeighting = Math.sin(latRad);
+
+                // Land hard gate
+                if (isLandMask[p] === 0) {
+                    iceMask[p] = 0;
+
+                    // outputs (keep them stable)
+                    ctx.outputs.latitudeWeighting[p] = latitudeWeighting;
+                    ctx.outputs.elevationWeighting[p] = 0;
+                    ctx.outputs.landWeighting[p] = 0;
+                    ctx.outputs.moistureAvailable[p] = 0;
+                    ctx.outputs.combined[p] = 0;
+                    ctx.outputs.threshold[p] = threshold;
+                    ctx.outputs.continentalFactor[p] = 0;
+                    ctx.outputs.thermalGate[p] = 0;
+                    ctx.outputs.effectiveAccumulation[p] = 0;
+
+                    continue;
+                }
 
                 const elevation = heightAboveSea[p];
                 const elevationFactor = clamp01(elevation / elevationOfIce);
 
-                // keep this for output/debug, but we won't use it as a multiplicative gate anymore
+                // keep this for output/debug
                 const elevationWeighting = 1 + elevationModifier * elevationFactor;
 
-                // keep existing land weighting (user-controlled), but treat it as a *melt* modifier (small term)
+                // keep existing land weighting (for debug/UI continuity)
                 const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
 
                 // --- ACCUMULATION (only moisture) ---
                 const moistureAvailable =
                     (moistureAvailability[p] * moistureScale) + moistureBias;
 
-                // clamp to a usable 0..1 accumulation signal (you can remove clamp if you want >1 to mean "very wet")
-                // const accum = clamp01(moistureAvailable);
                 const accum = moistureAvailable;
 
-                // --- MELT PRESSURE (weighted sum, latitude-dominant) ---
-                // convert "coldness" into "meltiness": high near equator, low near poles
-                const latMelt = 1 - latitudeWeighting;
+                // --- TEMPERATURE MODEL (Tw/Ts) ---
+                const T_lat = A * Math.pow(Math.cos(latRad), 1.5);
 
-                // continentalness: already scaled/bias'd, and damped by (1 - latitudeWeighting) in your code.
-                // Keep that idea so continental can't veto poles.
-                const continentalFactor =
-                    ((continentalValue[p] * continentalScale) + continentalBias);
 
-                // treat landWeighting as a small melt-side modifier; keep it bounded
-                const landMelt = clamp01(landWeighting);
+                const elevation_km = ELEV_KM_MAX * elevationFactor;
+                const T_elev = -L * elevation_km;
 
-                // elevation reduces melt (cooling). Use elevationFactor directly as the cooling term.
-                const elevCooling = elevationFactor;
+                const dT_global = -DELTA * iceLevel;
 
-                // weights: latitude should dominate; others are small nudges
-                const wLat = 0.9;
-                const wCont = 0.2;
-                const wLand = 0.15;
-                const wElev = 0.15;
-                let meltPressure = (
-                    wLat * latMelt
-                    + wCont * continentalFactor
-                    + wLand * landMelt
-                    - wElev * elevCooling
-                );
+                const T_mean = T_lat + T_elev + dT_global;
 
-                meltPressure = clamp01(meltPressure);
+                const T_season = S * Math.sin(latRad);
 
-                // global melt scale (your ice slider): lower => less melt => more ice.
-                // Reuse `threshold` as this scale without renaming.
-                const globalMelt = clamp01(threshold);
-                meltPressure *= globalMelt;
+                const continentalRaw =
+                    (continentalValue[p] * continentalScale) + continentalBias;
+                const continental01 = clamp01(continentalRaw);
 
-                // --- DECISION ---
-                // ice if accumulation beats melt pressure
-                let effectiveAccumulation = accum;
-                const thermalGate = meltPressure; // no longer a multiplicative gate; keep output slot stable
+                const T_cont = C * continental01;
 
-                const combined = clamp01(effectiveAccumulation - meltPressure);
+                const Tw = T_mean - T_season;
+                const Ts = T_mean + T_season + T_cont;
 
+                // --- ICE FORMATION + MELT ---
+                // if winter is freezing (Tw <= 0), all available snow becomes ice supply
+                const ice = (Tw <= 0) ? accum : 0;
+
+                // only melts if summer is above freezing
+                const meltPressure = Math.max(0, Ts);
+                const melt = k * meltPressure;
+
+                const iceLeft = ice - melt;
+
+                // Outputs (keep stable fields)
                 ctx.outputs.latitudeWeighting[p] = latitudeWeighting;
                 ctx.outputs.elevationWeighting[p] = elevationWeighting;
                 ctx.outputs.landWeighting[p] = landWeighting;
                 ctx.outputs.moistureAvailable[p] = moistureAvailable;
-                ctx.outputs.combined[p] = combined;
-                ctx.outputs.threshold[p] = threshold;
-                ctx.outputs.continentalFactor[p] = continentalFactor;
-                ctx.outputs.thermalGate[p] = thermalGate;
-                ctx.outputs.effectiveAccumulation[p] = effectiveAccumulation;
 
-                iceMask[p] = (effectiveAccumulation > meltPressure) ? 1 : 0;
+                // combined is now "remaining ice amount" (clamped to 0..1 for debug)
+                ctx.outputs.combined[p] = clamp01(iceLeft);
+
+                ctx.outputs.threshold[p] = threshold;
+
+                // keep continentalFactor output slot meaningful
+                ctx.outputs.continentalFactor[p] = continentalRaw;
+
+                // thermalGate: 1 if winter allows accumulation, else 0
+                ctx.outputs.thermalGate[p] = T_season;
+
+                ctx.outputs.effectiveAccumulation[p] = ice;
+
+                iceMask[p] = (iceLeft > 0) ? 1 : 0;
             }
 
         },
+
 
         recomputeWorldDerived: function () {
             if (!this._world) return;
@@ -931,10 +1000,10 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
         setParams: function (partial: Partial<RecolorParams>) {
             let useNewPath = true;
 
-            if (!useNewPath) {
-                Object.assign(this.params, partial);
-                this._recolorAllTiles();
-            } else {
+            // if (!useNewPath) {
+            //     Object.assign(this.params, partial);
+            //     this._recolorAllTiles();
+            // } else {
                 Object.assign(this.params, partial);
 
                 // Ensure world exists (async) then recompute + repaint
@@ -947,29 +1016,29 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                         // Optional: surface error
                         console.error("setParams world load failed", e);
                     });
-            }
+            // }
 
         },
 
-        _recolorAllTiles: function () {
-            const tilesObj = (this as any)._tiles as Record<string, { el: HTMLElement }>;
-            if (!tilesObj) return;
+        // _recolorAllTiles: function () {
+        //     const tilesObj = (this as any)._tiles as Record<string, { el: HTMLElement }>;
+        //     if (!tilesObj) return;
 
-            Object.values(tilesObj).forEach(({ el }) => {
-                if (!(el instanceof HTMLCanvasElement)) return;
+        //     Object.values(tilesObj).forEach(({ el }) => {
+        //         if (!(el instanceof HTMLCanvasElement)) return;
 
-                const rec = this._tileStore.get(el);
-                if (!rec) return;
+        //         const rec = this._tileStore.get(el);
+        //         if (!rec) return;
 
-                const { ctx, width, height, originalData, coords } = rec;
+        //         const { ctx, width, height, originalData, coords } = rec;
 
-                const ctxObj: ColorContext =
-                    this.buildColorContext(originalData, width, height, coords);
+        //         const ctxObj: ColorContext =
+        //             this.buildColorContext(originalData, width, height, coords);
 
-                const colored = this.colorPixels(ctxObj);
-                ctx.putImageData(colored, 0, 0);
-            });
-        },
+        //         const colored = this.colorPixels(ctxObj);
+        //         ctx.putImageData(colored, 0, 0);
+        //     });
+        // },
 
         _recolorAllTiles_global: function () {
             const tilesObj = (this as any)._tiles as Record<string, { el: HTMLElement }>;
@@ -1071,9 +1140,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
         },
 
     });
-
-
-
 
     // instantiate and return
     const layer = new (CanvasLayer as any) as RecolorLayer;
