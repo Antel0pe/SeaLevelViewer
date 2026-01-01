@@ -56,6 +56,25 @@ type WorldContext = {
         continentalFactor: Float32Array;
         thermalGate: Float32Array;
         effectiveAccumulation: Float32Array;
+
+        // --- temperature / melt diagnostics ---
+        T_lat: Float32Array;
+        T_elev: Float32Array;
+        dT_global: Float32Array;
+        T_mean: Float32Array;
+        T_season: Float32Array;
+        T_cont: Float32Array;
+
+        Tw: Float32Array;
+        Ts: Float32Array;
+
+        meltPressure: Float32Array;
+        melt: Float32Array;
+
+        accum: Float32Array;
+        iceSupply: Float32Array; // ice before melt (your `ice`)
+        iceLeft: Float32Array;   // iceSupply - melt (unclamped)
+        continental01: Float32Array;
     };
 };
 
@@ -121,6 +140,24 @@ export type LayerClickResult = {
     thermalGate: number;
     effectiveAccumulation: number;
 
+    T_lat: number;
+    T_elev: number;
+    dT_global: number;
+    T_mean: number;
+    T_season: number;
+    T_cont: number;
+
+    Tw: number;
+    Ts: number;
+
+    meltPressure: number;
+    melt: number;
+
+    accum: number;
+    iceSupply: number;
+    iceLeft: number;
+    continental01: number;
+    sstByLatitude: number;
 };
 
 export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
@@ -256,6 +293,24 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                     continentalFactor: new Float32Array(n),
                     thermalGate: new Float32Array(n),
                     effectiveAccumulation: new Float32Array(n),
+
+                    T_lat: new Float32Array(n),
+                    T_elev: new Float32Array(n),
+                    dT_global: new Float32Array(n),
+                    T_mean: new Float32Array(n),
+                    T_season: new Float32Array(n),
+                    T_cont: new Float32Array(n),
+
+                    Tw: new Float32Array(n),
+                    Ts: new Float32Array(n),
+
+                    meltPressure: new Float32Array(n),
+                    melt: new Float32Array(n),
+
+                    accum: new Float32Array(n),
+                    iceSupply: new Float32Array(n),
+                    iceLeft: new Float32Array(n),
+                    continental01: new Float32Array(n),
                 },
             };
         },
@@ -596,7 +651,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const MIN_SST = -1.8;
             const INV_RANGE = 1 / (MAX_SST - MIN_SST);
 
-                        // Precompute latitude by WORLD row using Web Mercator inverse
+            // Precompute latitude by WORLD row using Web Mercator inverse
             const latByRow = new Float32Array(height);
             for (let gy = 0; gy < height; gy++) {
                 latByRow[gy] = this._worldYToLatDeg_webMercator(gy, height);
@@ -626,7 +681,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 ctx.derived.sstByLatitude,
                 width,
                 height,
-                16,
+                25,
                 3,
                 getWindowForRow
             );
@@ -758,7 +813,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
         //     }
 
         // },
-                colorPixelsByIce_global: function (ctx: WorldContext) {
+        colorPixelsByIce_global: function (ctx: WorldContext) {
             const { width, height } = ctx.inputs;
             const {
                 iceLevel,
@@ -784,15 +839,19 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             // --- Temperature model constants (°C-like units) ---
             // These are intended as reasonable defaults; tune as needed.
             const A = 20;     // mean equator-to-pole contrast
+            const T_EQ = 27;     // mean annual equatorial surface temp (°C)
+            const T_POLE = -25; // mean annual polar surface temp (°C)
             const L = 6.5;    // °C per km lapse rate
             const S = 12;     // seasonal amplitude scale
-            const C = 8;      // summer continental warming scale
-            const DELTA = 8;  // max global cooling at iceLevel=1
+            const C = 20;      // summer continental warming scale
+            const DELTA = 18;  // max global cooling at iceLevel=1
             const ELEV_KM_MAX = 5;   // maps elevationFactor (0..1) to 0..5 km
+            const METERS_PER_ELEV_UNIT = 80; // choose this based on your source DEM
+
 
             // Melt conversion: converts °C-like summer warmth into "ice units" comparable to accum
             // Since accum can be >1 if you bias/scale moisture, keep this small.
-            const k = 1 / 20;
+            const k = 1 / 10;
 
             // Compute latitude for each WORLD row once (Web Mercator, z=0 pixel space)
             const latByRow = new Float32Array(height);
@@ -806,9 +865,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 const x = Math.abs(latitude); // degrees
                 const latRad = (x * Math.PI) / 180;
-
-                // Keep your existing debug-style "latitudeWeighting" variable
-                // (you can later reinterpret this in UI if you want)
                 const latitudeWeighting = Math.sin(latRad);
 
                 // Land hard gate
@@ -826,11 +882,28 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                     ctx.outputs.thermalGate[p] = 0;
                     ctx.outputs.effectiveAccumulation[p] = 0;
 
+                    ctx.outputs.T_lat[p] = 0;
+                    ctx.outputs.T_elev[p] = 0;
+                    ctx.outputs.dT_global[p] = 0;
+                    ctx.outputs.T_mean[p] = 0;
+                    ctx.outputs.T_season[p] = 0;
+                    ctx.outputs.T_cont[p] = 0;
+                    ctx.outputs.Tw[p] = 0;
+                    ctx.outputs.Ts[p] = 0;
+                    ctx.outputs.meltPressure[p] = 0;
+                    ctx.outputs.melt[p] = 0;
+                    ctx.outputs.accum[p] = 0;
+                    ctx.outputs.iceSupply[p] = 0;
+                    ctx.outputs.iceLeft[p] = 0;
+                    ctx.outputs.continental01[p] = 0;
+
                     continue;
                 }
 
                 const elevation = heightAboveSea[p];
                 const elevationFactor = clamp01(elevation / elevationOfIce);
+                const elevation_m = heightAboveSea[p] * METERS_PER_ELEV_UNIT;
+                const elevation_km = elevation_m / 1000;
 
                 // keep this for output/debug
                 const elevationWeighting = 1 + elevationModifier * elevationFactor;
@@ -845,10 +918,11 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const accum = moistureAvailable;
 
                 // --- TEMPERATURE MODEL (Tw/Ts) ---
-                const T_lat = A * Math.pow(Math.cos(latRad), 1.5);
+                const f = Math.pow(Math.cos(latRad), 1.3);
+                const T_lat = T_POLE + (T_EQ - T_POLE) * f;
 
 
-                const elevation_km = ELEV_KM_MAX * elevationFactor;
+                // const elevation_km = ELEV_KM_MAX * elevationFactor;
                 const T_elev = -L * elevation_km;
 
                 const dT_global = -DELTA * iceLevel;
@@ -859,7 +933,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 const continentalRaw =
                     (continentalValue[p] * continentalScale) + continentalBias;
-                const continental01 = clamp01(continentalRaw);
+                const COAST = 0.5;
+                const continental01 = clamp01((continentalRaw - COAST) / (1 - COAST));
 
                 const T_cont = C * continental01;
 
@@ -891,9 +966,25 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 ctx.outputs.continentalFactor[p] = continentalRaw;
 
                 // thermalGate: 1 if winter allows accumulation, else 0
-                ctx.outputs.thermalGate[p] = T_season;
+                ctx.outputs.thermalGate[p] = (Tw <= 0) ? 1 : 0;
 
                 ctx.outputs.effectiveAccumulation[p] = ice;
+
+                ctx.outputs.accum[p] = accum;
+                ctx.outputs.T_lat[p] = T_lat;
+                ctx.outputs.T_elev[p] = T_elev;
+                ctx.outputs.dT_global[p] = dT_global;
+                ctx.outputs.T_mean[p] = T_mean;
+                ctx.outputs.T_season[p] = T_season;
+                ctx.outputs.T_cont[p] = T_cont;
+                ctx.outputs.Tw[p] = Tw;
+                ctx.outputs.Ts[p] = Ts;
+                ctx.outputs.meltPressure[p] = meltPressure;
+                ctx.outputs.melt[p] = melt;
+                ctx.outputs.iceSupply[p] = ice;
+                ctx.outputs.iceLeft[p] = iceLeft;
+                ctx.outputs.continental01[p] = continental01;
+
 
                 iceMask[p] = (iceLeft > 0) ? 1 : 0;
             }
@@ -1004,18 +1095,18 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             //     Object.assign(this.params, partial);
             //     this._recolorAllTiles();
             // } else {
-                Object.assign(this.params, partial);
+            Object.assign(this.params, partial);
 
-                // Ensure world exists (async) then recompute + repaint
-                this._ensureWorldBaseLoaded()
-                    .then(() => {
-                        this.recomputeWorldDerived();
-                        this._recolorAllTiles_global();
-                    })
-                    .catch((e: any) => {
-                        // Optional: surface error
-                        console.error("setParams world load failed", e);
-                    });
+            // Ensure world exists (async) then recompute + repaint
+            this._ensureWorldBaseLoaded()
+                .then(() => {
+                    this.recomputeWorldDerived();
+                    this._recolorAllTiles_global();
+                })
+                .catch((e: any) => {
+                    // Optional: surface error
+                    console.error("setParams world load failed", e);
+                });
             // }
 
         },
@@ -1127,7 +1218,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 continentalFactor: out.continentalFactor[wIndex],
                 combined,
                 threshold,
-                ice: combined > threshold,
+                ice: der.iceMask[wIndex] > 0,
 
                 isLand: der.isLandMask[wIndex],
                 heightAboveSea: der.heightAboveSea[wIndex],
@@ -1135,6 +1226,25 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 continentalValue: der.continentalValue[wIndex],
                 thermalGate: out.thermalGate[wIndex],
                 effectiveAccumulation: out.effectiveAccumulation[wIndex],
+
+                T_lat: out.T_lat[wIndex],
+                T_elev: out.T_elev[wIndex],
+                dT_global: out.dT_global[wIndex],
+                T_mean: out.T_mean[wIndex],
+                T_season: out.T_season[wIndex],
+                T_cont: out.T_cont[wIndex],
+
+                Tw: out.Tw[wIndex],
+                Ts: out.Ts[wIndex],
+
+                meltPressure: out.meltPressure[wIndex],
+                melt: out.melt[wIndex],
+
+                accum: out.accum[wIndex],
+                iceSupply: out.iceSupply[wIndex],
+                iceLeft: out.iceLeft[wIndex],
+                continental01: out.continental01[wIndex],
+                sstByLatitude: der.sstByLatitude[wIndex],
 
             };
         },

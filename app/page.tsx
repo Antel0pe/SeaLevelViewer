@@ -24,10 +24,10 @@ export default function Home() {
 
     seaLevelDropDueToIce: 0.05,
     dryingOutExponent: 2,
-    moistureBias: 0.1,
-    moistureScale: 0.2,
+    moistureBias: 0.0,
+    moistureScale: 1,
 
-    continentalBias: 0.12,
+    continentalBias: 0,
     continentalScale: 1.0,
   });
   const [showAdvanced, setShowAdvanced] = useState(false);

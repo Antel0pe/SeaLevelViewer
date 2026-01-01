@@ -42,32 +42,50 @@ export default function TopographyMap({ params }: MapProps) {
             if (!res) return;
 
             const html = `
-    <div style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.35">
-<div>
-  <b>wIndex</b>: ${res.worldIndex} (gx=${res.gx}, gy=${res.gy})
-</div>
-<div>
-  <b>click lat/lng</b>: ${res.latlng.lat.toFixed(4)}, ${res.latlng.lng.toFixed(4)}
-</div>
-<div>
-  <b>world lat/lng</b>: ${res.worldLat.toFixed(4)}, ${res.worldLng.toFixed(4)}
-</div>
+  <div style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.35">
+    <div><b>wIndex</b>: ${res.worldIndex} (gx=${res.gx}, gy=${res.gy})</div>
+    <div><b>click lat/lng</b>: ${res.latlng.lat.toFixed(4)}, ${res.latlng.lng.toFixed(4)}</div>
+    <div><b>world lat/lng</b>: ${res.worldLat.toFixed(4)}, ${res.worldLng.toFixed(4)}</div>
 
-      <div><b>tile</b>: (${res.tile.x}, ${res.tile.y}, z=${res.tile.z}) px=(${res.tilePixel.x}, ${res.tilePixel.y})</div>
-      <hr style="margin:6px 0" />
-      <div><b>latitudeWeighting</b>: ${res.latitudeWeighting.toFixed(4)}</div>
-      <div><b>elevationWeighting</b>: ${res.elevationWeighting.toFixed(4)} (h=${res.heightAboveSea})</div>
-      <div><b>landWeighting</b>: ${res.landWeighting.toFixed(4)} (isLand=${res.isLand})</div>
-      <div><b>moistureAvailable</b>: ${res.moistureAvailable.toFixed(4)} (raw=${res.moistureAvailability.toFixed(4)})</div>
-            <div><b>Continental Factor</b>: ${res.continentalFactor.toFixed(4)} (raw=${res.continentalValue.toFixed(4)})</div>
-            <div><b>thermalGate</b>: ${res.thermalGate.toFixed(4)}</div>
-<div><b>effectiveAccumulation</b>: ${res.effectiveAccumulation.toFixed(4)}</div>
+    <div><b>tile</b>: (${res.tile.x}, ${res.tile.y}, z=${res.tile.z}) px=(${res.tilePixel.x}, ${res.tilePixel.y})</div>
+    <hr style="margin:6px 0" />
 
-      <div><b>combined</b>: ${res.combined.toFixed(4)}</div>
-      <div><b>threshold</b>: ${res.threshold.toFixed(4)}</div>
-      <div><b>ice</b>: ${res.ice ? "YES" : "no"}</div>
-    </div>
-  `;
+    <div><b>latitudeWeighting</b>: ${res.latitudeWeighting.toFixed(4)}</div>
+    <div><b>elevationWeighting</b>: ${res.elevationWeighting.toFixed(4)} (h=${res.heightAboveSea})</div>
+    <div><b>landWeighting</b>: ${res.landWeighting.toFixed(4)} (isLand=${res.isLand})</div>
+    <div><b>sstByLatitude</b>: ${res.sstByLatitude.toFixed(4)}</div>
+    <div><b>moistureAvailable</b>: ${res.moistureAvailable.toFixed(4)} (raw=${res.moistureAvailability.toFixed(4)})</div>
+    <div><b>Continental Factor</b>: ${res.continentalFactor.toFixed(4)} (raw=${res.continentalValue.toFixed(4)})</div>
+
+    <div><b>thermalGate</b>: ${res.thermalGate.toFixed(4)} (1=Tw<=0)</div>
+    <div><b>effectiveAccumulation</b>: ${res.effectiveAccumulation.toFixed(4)}</div>
+
+    <hr style="margin:6px 0" />
+
+    <div><b>T_lat</b>: ${res.T_lat.toFixed(4)}</div>
+    <div><b>T_elev</b>: ${res.T_elev.toFixed(4)}</div>
+    <div><b>dT_global</b>: ${res.dT_global.toFixed(4)}</div>
+    <div><b>T_mean</b>: ${res.T_mean.toFixed(4)}</div>
+    <div><b>T_season</b>: ${res.T_season.toFixed(4)}</div>
+    <div><b>T_cont</b>: ${res.T_cont.toFixed(4)} (continental01=${res.continental01.toFixed(4)})</div>
+
+    <div><b>Tw</b>: ${res.Tw.toFixed(4)}</div>
+    <div><b>Ts</b>: ${res.Ts.toFixed(4)}</div>
+
+    <div><b>accum</b>: ${res.accum.toFixed(4)}</div>
+    <div><b>iceSupply</b>: ${res.iceSupply.toFixed(4)}</div>
+    <div><b>meltPressure</b>: ${res.meltPressure.toFixed(4)}</div>
+    <div><b>melt</b>: ${res.melt.toFixed(4)}</div>
+    <div><b>iceLeft</b>: ${res.iceLeft.toFixed(4)}</div>
+
+    <hr style="margin:6px 0" />
+
+    <div><b>combined</b>: ${res.combined.toFixed(4)}</div>
+    <div><b>threshold</b>: ${res.threshold.toFixed(4)}</div>
+    <div><b>ice</b>: ${res.ice ? "YES" : "no"}</div>
+  </div>
+`;
+
 
             L.popup()
                 .setLatLng(e.latlng)
