@@ -12,12 +12,25 @@ export default function TopographyMap({ params }: MapProps) {
     const layerRef = useRef<RecolorLayer | null>(null);
 
     useEffect(() => {
+        const tileSize = 1024;
+        const CRS512 = L.Util.extend({}, L.CRS.EPSG3857, {
+            scale: (zoom: number) => tileSize * Math.pow(2, zoom),
+            zoom: (scale: number) => Math.log(scale / tileSize) / Math.LN2,
+        });
+        const worldBounds = L.latLngBounds(
+            L.latLng(-85.05112878, -180),
+            L.latLng(85.05112878, 180)
+        );
+
         const map = L.map("map", {
             center: [20, 0],
-            zoom: 2,
+            zoom: 0,
             minZoom: 0,
             maxZoom: 3,
-            worldCopyJump: true,
+            worldCopyJump: false,
+            crs: CRS512,
+            // maxBounds: worldBound    s,
+            maxBoundsViscosity: 1.0, // 1.0 = hard clamp, 0 = soft
         });
 
         mapRef.current = map;
@@ -29,6 +42,7 @@ export default function TopographyMap({ params }: MapProps) {
                 return `/${process.env.NEXT_PUBLIC_TOPOGRAPHY_TILE_URL}/${coords.z}/${coords.x}/${tmsY}.png`;
             },
             initial: params,
+            tileSize: tileSize
         });
 
         layer.addTo(map);

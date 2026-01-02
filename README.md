@@ -27,7 +27,8 @@ gdal_translate -of VRT -ot Byte \
   -scale -10919 8627 0 254 \
   gebco3857.tif gebco3857_byte.vrt
 
-gdal2tiles.py -z 0-3 -w none gebco3857_byte.vrt tiles/
+gdal2tiles.py -z 0-0 --tilesize=512 -w none \
+  gebco3857_byte.vrt tiles/
 ```
 
 

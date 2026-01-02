@@ -108,7 +108,8 @@ export type CanvasLayerCtor = new (opts?: L.GridLayerOptions) => RecolorLayer;
 export type CreateRecolorLayerOpts = {
     getMap: () => L.Map | null;              // instead of mapRef
     tileUrl: (coords: L.Coords) => string;   // lets you swap sources easily
-    initial: RecolorParams
+    initial: RecolorParams;
+    tileSize?: number;
 };
 
 export type LayerClickResult = {
@@ -165,6 +166,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
         getMap,
         tileUrl,
         initial = {},
+        tileSize = 256
     } = opts;
 
     const lerp = (a: number, b: number, threshold: number) =>
@@ -496,8 +498,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 img.onload = () => {
                     try {
-                        const w = 256;
-                        const h = 256;
+                        const w = img.width;
+                        const h = img.height;
 
                         const off = document.createElement("canvas");
                         off.width = w;
@@ -681,7 +683,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 ctx.derived.sstByLatitude,
                 width,
                 height,
-                25,
+                width / 8,
                 3,
                 getWindowForRow
             );
@@ -698,7 +700,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 landMaskF32,
                 width,
                 height,
-                25,
+                width / 8,
                 3,
                 getCenteredWindowForRow
             );
@@ -846,7 +848,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const C = 20;      // summer continental warming scale
             const DELTA = 18;  // max global cooling at iceLevel=1
             const ELEV_KM_MAX = 5;   // maps elevationFactor (0..1) to 0..5 km
-            const METERS_PER_ELEV_UNIT = 80; // choose this based on your source DEM
+            const METERS_PER_ELEV_UNIT = 77; // choose this based on your source DEM
 
 
             // Melt conversion: converts °C-like summer warmth into "ice units" comparable to accum
@@ -901,11 +903,11 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 }
 
                 const elevation = heightAboveSea[p];
-                const elevationFactor = clamp01(elevation / elevationOfIce);
                 const elevation_m = heightAboveSea[p] * METERS_PER_ELEV_UNIT;
                 const elevation_km = elevation_m / 1000;
 
                 // keep this for output/debug
+                const elevationFactor = clamp01(elevation / elevationOfIce);
                 const elevationWeighting = 1 + elevationModifier * elevationFactor;
 
                 // keep existing land weighting (for debug/UI continuity)
@@ -1013,23 +1015,23 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             px: number,
             py: number,
             worldW: number,
-            worldH: number
+            worldH: number,
+            tileSize: number,
         ): number {
-            // find in absolute tile space which pixel im in
-            const worldPx = (coords.x << 8) + px; // coords.x * 256 + px
-            const worldPy = (coords.y << 8) + py; // coords.y * 256 + py
+            const worldPx = coords.x * tileSize + px;
+            const worldPy = coords.y * tileSize + py;
 
-            // find what pixel this corresponds to at z=0
-            const shift = coords.z | 0;
-            const gx = worldPx >> shift;
-            const gy = worldPy >> shift;
+            const scale = 1 << (coords.z | 0);
 
-            // Clamp just in case (shouldn’t be needed in ideal world, but keeps it safe)
+            const gx = Math.floor(worldPx / scale);
+            const gy = Math.floor(worldPy / scale);
+
             const cx = gx < 0 ? 0 : gx >= worldW ? worldW - 1 : gx;
             const cy = gy < 0 ? 0 : gy >= worldH ? worldH - 1 : gy;
 
             return cy * worldW + cx;
         },
+
 
         writeColorToPixels_global: function (
             coords: L.Coords,
@@ -1056,7 +1058,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                     const tIndex = py * tileW + px;
                     const di = tIndex * 4;
 
-                    const wIndex = this._tilePixelToWorldIndex_z0(coords, px, py, worldW, worldH);
+                    const wIndex = this._tilePixelToWorldIndex_z0(coords, px, py, worldW, worldH, this.getTileSize().x);
 
                     const elevation = worldRGBA[wIndex * 4]; // red channel as before
 
@@ -1184,7 +1186,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const worldW = world.inputs.width;
             const worldH = world.inputs.height;
 
-            const wIndex = this._tilePixelToWorldIndex_z0(coords, px, py, worldW, worldH);
+            const wIndex = this._tilePixelToWorldIndex_z0(coords, px, py, worldW, worldH, tileSize);
 
             const gx = wIndex % worldW;
             const gy = (wIndex / worldW) | 0;
@@ -1252,6 +1254,9 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
     });
 
     // instantiate and return
-    const layer = new (CanvasLayer as any) as RecolorLayer;
+    const layer = new (CanvasLayer as any)({
+        tileSize: tileSize,
+        noWrap: true,
+    }) as RecolorLayer;
     return layer;
 }
