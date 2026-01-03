@@ -1,7 +1,8 @@
 import L from "leaflet"
 import "leaflet/dist/leaflet.css";
 import { useEffect, useRef } from "react";
-import { createRecolorLayer, RecolorLayer, RecolorParams } from "./RecolorGridLayer";
+import { createRecolorLayer, RecolorLayer } from "./RecolorGridLayer";
+import { RecolorParams } from "./types";
 
 type MapProps = {
     params: RecolorParams;
@@ -12,7 +13,7 @@ export default function TopographyMap({ params }: MapProps) {
     const layerRef = useRef<RecolorLayer | null>(null);
 
     useEffect(() => {
-        const tileSize = 1024;
+        const tileSize = 256;
         const CRS512 = L.Util.extend({}, L.CRS.EPSG3857, {
             scale: (zoom: number) => tileSize * Math.pow(2, zoom),
             zoom: (scale: number) => Math.log(scale / tileSize) / Math.LN2,
@@ -24,13 +25,13 @@ export default function TopographyMap({ params }: MapProps) {
 
         const map = L.map("map", {
             center: [20, 0],
-            zoom: 0,
+            zoom: 2,
             minZoom: 0,
             maxZoom: 3,
-            worldCopyJump: false,
-            crs: CRS512,
+            worldCopyJump: true,
+            // crs: CRS512,
             // maxBounds: worldBound    s,
-            maxBoundsViscosity: 1.0, // 1.0 = hard clamp, 0 = soft
+            // maxBoundsViscosity: 1.0, // 1.0 = hard clamp, 0 = soft
         });
 
         mapRef.current = map;

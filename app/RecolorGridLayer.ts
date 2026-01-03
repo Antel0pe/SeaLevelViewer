@@ -2,6 +2,7 @@
 import L from "leaflet";
 import { tileRowToLat } from "./utils";
 import { blurMaskWithSAT_U8, makeGetWindowForRow, windowByLatitudeAnchors, WindowSpec } from "./RectangleSum";
+import { RecolorParams, WorldContext, VIEW_TYPE, RGB, LayerClickResult } from "./types";
 
 type TileRecord = {
     ctx: CanvasRenderingContext2D;
@@ -10,93 +11,6 @@ type TileRecord = {
     originalData?: Uint8ClampedArray;
     coords: L.Coords;
 };
-
-// type ColorContext = {
-//     inputs: {
-//         originalData: Uint8ClampedArray;
-//         width: number;
-//         height: number;
-//         coords: L.Coords;
-//     };
-//     params: RecolorParams
-//     derived: {
-//         isLandMask: Uint8Array;          // 0 sea, 1 land
-//         heightAboveSea: Uint8Array;      // 0 for sea, else (elev - seaLevel)
-//         iceMask: Uint8Array;
-//         effectiveSeaLevel: number;
-//         moistureAvailability: Float32Array;
-//         sstByLatitude: Float32Array;
-//     };
-// };
-
-type WorldContext = {
-    inputs: {
-        originalData: Uint8ClampedArray; // the z=0 tile's RGBA
-        width: number;                  // 256
-        height: number;                 // 256
-        coords: L.Coords;               // { x:0, y:0, z:0 }
-    };
-    params: RecolorParams;
-    derived: {
-        isLandMask: Uint8Array;          // 0 sea, 1 land
-        heightAboveSea: Uint8Array;      // 0 for sea, else (elev - seaLevel)
-        iceMask: Uint8Array;
-        effectiveSeaLevel: number;
-        moistureAvailability: Float32Array;
-        sstByLatitude: Float32Array;
-        continentalValue: Float32Array;
-    };
-    outputs: {
-        latitudeWeighting: Float32Array;
-        elevationWeighting: Float32Array;
-        landWeighting: Float32Array;
-        moistureAvailable: Float32Array;
-        combined: Float32Array;
-        threshold: Float32Array; // constant per world pixel, but stored for convenience
-        continentalFactor: Float32Array;
-        thermalGate: Float32Array;
-        effectiveAccumulation: Float32Array;
-
-        // --- temperature / melt diagnostics ---
-        T_lat: Float32Array;
-        T_elev: Float32Array;
-        dT_global: Float32Array;
-        T_mean: Float32Array;
-        T_season: Float32Array;
-        T_cont: Float32Array;
-
-        Tw: Float32Array;
-        Ts: Float32Array;
-
-        meltPressure: Float32Array;
-        melt: Float32Array;
-
-        accum: Float32Array;
-        iceSupply: Float32Array; // ice before melt (your `ice`)
-        iceLeft: Float32Array;   // iceSupply - melt (unclamped)
-        continental01: Float32Array;
-    };
-};
-
-
-export type RecolorParams = {
-    seaLevel: number;
-    iceLevel: number;
-
-    latitudeBiasExponent: number;
-    elevationOfIce: number;
-    seaBias: number;
-    landBias: number;
-    elevationModifier: number;
-    seaLevelDropDueToIce: number;
-    dryingOutExponent: number;
-    moistureBias: number;
-    moistureScale: number;
-
-    continentalBias: number;
-    continentalScale: number;
-};
-
 
 export type RecolorLayer = L.GridLayer & {
     setParams(p: Partial<RecolorParams>): void;
@@ -110,55 +24,6 @@ export type CreateRecolorLayerOpts = {
     tileUrl: (coords: L.Coords) => string;   // lets you swap sources easily
     initial: RecolorParams;
     tileSize?: number;
-};
-
-export type LayerClickResult = {
-    latlng: L.LatLng;
-    zoom: number;
-    tile: { x: number; y: number; z: number };
-    tilePixel: { x: number; y: number };
-    worldIndex: number;
-    gx: number;
-    gy: number;
-    worldLat: number;
-    worldLng: number;
-
-    latitudeWeighting: number;
-    elevationWeighting: number;
-    landWeighting: number;
-    moistureAvailable: number;
-    continentalValue: number;
-    combined: number;
-    threshold: number;
-    ice: boolean;
-
-    // optionally include raw derived values too
-    isLand: number;
-    heightAboveSea: number;
-    moistureAvailability: number;
-    continentalFactor: number;
-
-    thermalGate: number;
-    effectiveAccumulation: number;
-
-    T_lat: number;
-    T_elev: number;
-    dT_global: number;
-    T_mean: number;
-    T_season: number;
-    T_cont: number;
-
-    Tw: number;
-    Ts: number;
-
-    meltPressure: number;
-    melt: number;
-
-    accum: number;
-    iceSupply: number;
-    iceLeft: number;
-    continental01: number;
-    sstByLatitude: number;
 };
 
 export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
@@ -203,13 +68,14 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
     // High elevation land (mountains / rock)
     const HIGH_LAND = [160, 110, 60] as const;
 
-    const landColor = (value: number) => {
-        // value assumed in [0..255]
-        const threshold = Math.max(0, Math.min(1, value / 255));
+    const landColor = (elev: number, seaLevel: number) => {
+        // elev + seaLevel assumed in [0..255]
+        const denom = Math.max(1, 255 - seaLevel); // avoid divide-by-zero if seaLevel==255
+        const t = Math.max(0, Math.min(1, (elev - seaLevel) / denom)); // seaLevel..255 -> 0..1
 
-        const r = lerp(LOW_LAND[0], HIGH_LAND[0], threshold);
-        const g = lerp(LOW_LAND[1], HIGH_LAND[1], threshold);
-        const b = lerp(LOW_LAND[2], HIGH_LAND[2], threshold);
+        const r = lerp(LOW_LAND[0], HIGH_LAND[0], t);
+        const g = lerp(LOW_LAND[1], HIGH_LAND[1], t);
+        const b = lerp(LOW_LAND[2], HIGH_LAND[2], t);
 
         return [r, g, b] as const;
     };
@@ -232,33 +98,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
         _world: null as WorldContext | null,
         _worldBasePromise: null as Promise<void> | null,
-
-        // buildColorContext: function (
-        //     originalData: Uint8ClampedArray,
-        //     width: number,
-        //     height: number,
-        //     coords: L.Coords
-        // ): ColorContext {
-        //     const isLandMask = new Uint8Array(width * height);
-
-        //     return {
-        //         inputs: {
-        //             originalData,
-        //             width,
-        //             height,
-        //             coords,
-        //         },
-        //         params: this.params,
-        //         derived: {
-        //             isLandMask,
-        //             heightAboveSea: new Uint8Array(width * height),
-        //             iceMask: new Uint8Array(width * height),
-        //             effectiveSeaLevel: this.params.seaLevel,
-        //             moistureAvailability: new Float32Array(width * height),
-        //             sstByLatitude: new Float32Array(width * height),
-        //         },
-        //     };
-        // },
 
         buildWorldContext: function (
             originalData: Uint8ClampedArray,
@@ -316,170 +155,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 },
             };
         },
-
-
-        // deriveEffectiveSeaLevel: function (ctx: ColorContext) {
-        //     const { seaLevel, iceLevel, seaLevelDropDueToIce } = ctx.params; // iceLevel: 0..1
-
-        //     const seaDrop = iceLevel * seaLevel * seaLevelDropDueToIce;
-
-        //     // Clamp to [0, 255] so downstream logic stays sane
-        //     let eff = seaLevel - seaDrop;
-        //     if (eff < 0) eff = 0;
-        //     if (eff > 255) eff = 255;
-
-        //     ctx.derived.effectiveSeaLevel = eff;
-        // },
-
-        // colorPixelsBySeaLevel: function (ctx: ColorContext) {
-        //     const { originalData, height, coords, width } = ctx.inputs;
-        //     // const { seaLevel } = ctx.params;
-        //     const { isLandMask, heightAboveSea, effectiveSeaLevel } = ctx.derived;
-
-        //     for (let i = 0, p = 0; i < originalData.length; i += 4, p++) {
-        //         const elevation = originalData[i];
-
-        //         if (elevation < effectiveSeaLevel) {
-        //             isLandMask[p] = 0;
-        //             heightAboveSea[p] = 0;
-        //         } else {
-        //             isLandMask[p] = 1;
-
-        //             // clamp because Uint8Array wraps on >255
-        //             const h = elevation - effectiveSeaLevel;
-        //             heightAboveSea[p] = h > 255 ? 255 : h < 0 ? 0 : h;
-        //         }
-        //     }
-
-        //     const map = getMap();
-        //     if (!map) return;
-        //     const latByRow = new Float32Array(height);
-        //     for (let py = 0; py < height; py++) {
-        //         latByRow[py] = tileRowToLat(map, coords, py, height);
-        //     }
-
-        //     const MAX_SST = 29.5;  // equatorial warm ocean
-        //     const MIN_SST = -1.8;  // freezing seawater
-        //     const INV_RANGE = 1 / (MAX_SST - MIN_SST);
-
-        //     for (let y = 0; y < height; y++) {
-        //         const latDeg = latByRow[y];
-        //         const latRad = (Math.abs(latDeg) * Math.PI) / 180;
-
-        //         // Same latitude → SST shape as before
-        //         const t = Math.pow(Math.cos(latRad), 1.6); // 1 at equator → 0 at poles
-        //         let sst = MIN_SST + (MAX_SST - MIN_SST) * t;
-
-        //         // subtle NH cooling asymmetry (optional but nice visually)
-        //         if (latDeg > 0) {
-        //             sst -= 0.8 * Math.pow(Math.sin(latRad), 1.2);
-        //         }
-
-        //         // Normalize to [0, 1]
-        //         const sstNorm = clamp01((sst - MIN_SST) * INV_RANGE) + 0.5;
-
-        //         const rowOff = y * width;
-        //         for (let x = 0; x < width; x++) {
-        //             const idx = rowOff + x;
-        //             ctx.derived.sstByLatitude[idx] = isLandMask[idx] === 1 ? 0 : sstNorm;
-
-        //         }
-        //     }
-
-        //     ctx.derived.moistureAvailability = blurMaskWithSAT_U8(ctx.derived.sstByLatitude, width, height, 16, 3, makeGetWindowForRow(map, coords))
-        // },
-
-        // colorPixelsByIce: function (ctx: ColorContext) {
-        //     const { width, height, coords } = ctx.inputs;
-        //     const {
-        //         iceLevel,
-        //         latitudeBiasExponent,
-        //         elevationOfIce,
-        //         seaBias,
-        //         landBias,
-        //         elevationModifier,
-        //         dryingOutExponent,
-        //     } = ctx.params;
-
-        //     const threshold = 1 - iceLevel;
-
-        //     const { isLandMask, heightAboveSea, iceMask, moistureAvailability } = ctx.derived;
-
-        //     const map = getMap();
-        //     if (!map) return;
-
-        //     // Compute latitude for each pixel row once
-        //     const latByRow = new Float32Array(height);
-        //     for (let py = 0; py < height; py++) {
-        //         latByRow[py] = tileRowToLat(map, coords, py, height);
-        //     }
-
-        //     for (let p = 0; p < width * height; p++) {
-        //         const py = (p / width) | 0;          // row index
-        //         const latitude = latByRow[py];       // per-pixel latitude (via its row)
-
-        //         const latitudeWeighting = Math.pow(Math.abs(latitude) / 90, latitudeBiasExponent);
-
-        //         const elevation = heightAboveSea[p]; // 0 for sea, else elev - seaLevel
-        //         const elevationWeighting = clamp01(elevation / elevationOfIce);
-        //         const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
-
-        //         // const moistureAvailability = 1 - Math.pow(moistureAvailability[p], dryingOutExponent);
-        //         const moistureAvailable = moistureAvailability[p] + 1;
-        //         // const moistureAvailable = 1;
-
-        //         const combined = clamp01(latitudeWeighting * (1 + elevationModifier * elevationWeighting) * landWeighting * moistureAvailable);
-        //         iceMask[p] = combined > threshold ? 1 : 0;
-        //     }
-        // },
-
-        // writeColorToPixels: function (ctx: ColorContext) {
-        //     const { originalData, width, height } = ctx.inputs;
-        //     const { seaLevel } = ctx.params;
-        //     const { isLandMask, iceMask, moistureAvailability } = ctx.derived;
-
-        //     const debug = false; // set false to disable moisture debug
-
-        //     const imageData = new ImageData(width, height);
-        //     const data = imageData.data;
-
-        //     for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-        //         const elevation = originalData[i];
-
-        //         let r: number, g: number, b: number;
-
-        //         if (iceMask[p] === 1) {
-        //             [r, g, b] = iceColor();
-        //         } else if (isLandMask[p] === 1) {
-        //             [r, g, b] = landColor(elevation);
-        //         } else {
-        //             [r, g, b] = waterColor(elevation, seaLevel);
-        //         }
-
-        //         // ---- DEBUG OVERRIDE ----
-        //         if (debug) {
-        //             const m = moistureAvailability[p]; // assumed 0..1
-        //             r = Math.round(m * 255);
-        //             g = 0;
-        //             b = 0;
-        //         }
-
-        //         data[i] = r | 0;
-        //         data[i + 1] = g | 0;
-        //         data[i + 2] = b | 0;
-        //         data[i + 3] = 255;
-        //     }
-
-        //     return imageData;
-        // },
-
-
-        // colorPixels: function (ctx: ColorContext) {
-        //     this.deriveEffectiveSeaLevel(ctx);
-        //     this.colorPixelsBySeaLevel(ctx);
-        //     this.colorPixelsByIce(ctx);
-        //     return this.writeColorToPixels(ctx);
-        // },
 
         _ensureWorldBaseLoaded: function (): Promise<void> {
             // Already computed
@@ -551,51 +226,18 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
             this._ensureWorldBaseLoaded()
                 .then(() => {
-                    const useNewGlobalSampling = true; // flip true/false here
+                    this._tileStore.set(tile, {
+                        ctx,
+                        width: size.x,
+                        height: size.y,
+                        coords,
+                    });
 
-                    if (useNewGlobalSampling) {
-                        // NEW PIPELINE: sample from world + draw
-                        this._tileStore.set(tile, {
-                            ctx,
-                            width: size.x,
-                            height: size.y,
-                            coords,
-                        });
+                    const colored = this.writeColorToPixels_global(coords, size.x, size.y);
+                    ctx.putImageData(colored, 0, 0);
+                    done(null, tile);
+                    return;
 
-
-                        const colored = this.writeColorToPixels_global(coords, size.x, size.y);
-                        ctx.putImageData(colored, 0, 0);
-                        done(null, tile);
-                        return;
-                    }
-
-                    // const img = new Image();
-                    // img.crossOrigin = "anonymous";
-
-                    // img.src = tileUrl(coords);
-
-                    // img.onload = () => {
-                    //     ctx.drawImage(img, 0, 0, size.x, size.y);
-
-                    //     const src = ctx.getImageData(0, 0, size.x, size.y);
-                    //     const originalData = new Uint8ClampedArray(src.data);
-
-                    //     // Store by the actual canvas element
-                    //     this._tileStore.set(tile, {
-                    //         ctx,
-                    //         width: size.x,
-                    //         height: size.y,
-                    //         originalData,
-                    //         coords
-                    //     });
-                    //     const ctxObj: ColorContext = this.buildColorContext(originalData, size.x, size.y, coords);
-                    //     const colored = this.colorPixels(ctxObj);
-                    //     ctx.putImageData(colored, 0, 0);
-
-                    //     done(null, tile);
-                    // };
-
-                    // img.onerror = (e) => done(e, tile);
                 }).catch((e: any) => {
                     // world load failed; still finish tile so Leaflet doesn't hang
                     done(e, tile);
@@ -707,114 +349,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
         },
 
-
-        // colorPixelsByIce_global: function (ctx: WorldContext) {
-        //     const { width, height } = ctx.inputs;
-        //     const {
-        //         iceLevel,
-        //         latitudeBiasExponent,
-        //         elevationOfIce,
-        //         seaBias,
-        //         landBias,
-        //         elevationModifier,
-        //         dryingOutExponent,
-
-        //         moistureBias,
-        //         moistureScale,
-
-        //         continentalBias,
-        //         continentalScale,
-        //     } = ctx.params;
-
-        //     const threshold = 1 - iceLevel;
-
-        //     const { isLandMask, heightAboveSea, iceMask, moistureAvailability, continentalValue } = ctx.derived;
-
-        //     // Compute latitude for each WORLD row once (Web Mercator, z=0 pixel space)
-        //     const latByRow = new Float32Array(height);
-        //     for (let gy = 0; gy < height; gy++) {
-        //         latByRow[gy] = this._worldYToLatDeg_webMercator(gy, height);
-        //     }
-
-        //     for (let p = 0; p < width * height; p++) {
-        //         const gy = (p / width) | 0;
-        //         const latitude = latByRow[gy];
-
-        //         const x = Math.abs(latitude); // degrees
-        //         const latitudeWeighting = Math.sin((x * Math.PI) / 180);
-
-        //         const elevation = heightAboveSea[p];
-        //         const elevationFactor = clamp01(elevation / elevationOfIce);
-
-        //         // keep this for output/debug, but we won't use it as a multiplicative gate anymore
-        //         const elevationWeighting = 1 + elevationModifier * elevationFactor;
-
-        //         // keep existing land weighting (user-controlled), but treat it as a *melt* modifier (small term)
-        //         const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
-
-        //         // --- ACCUMULATION (only moisture) ---
-        //         const moistureAvailable =
-        //             (moistureAvailability[p] * moistureScale) + moistureBias;
-
-        //         // clamp to a usable 0..1 accumulation signal (you can remove clamp if you want >1 to mean "very wet")
-        //         // const accum = clamp01(moistureAvailable);
-        //         const accum = moistureAvailable;
-
-        //         // --- MELT PRESSURE (weighted sum, latitude-dominant) ---
-        //         // convert "coldness" into "meltiness": high near equator, low near poles
-        //         const latMelt = 1 - latitudeWeighting;
-
-        //         // continentalness: already scaled/bias'd, and damped by (1 - latitudeWeighting) in your code.
-        //         // Keep that idea so continental can't veto poles.
-        //         const continentalFactor =
-        //             ((continentalValue[p] * continentalScale) + continentalBias);
-
-        //         // treat landWeighting as a small melt-side modifier; keep it bounded
-        //         const landMelt = clamp01(landWeighting);
-
-        //         // elevation reduces melt (cooling). Use elevationFactor directly as the cooling term.
-        //         const elevCooling = elevationFactor;
-
-        //         // weights: latitude should dominate; others are small nudges
-        //         const wLat = 0.9;
-        //         const wCont = 0.2;
-        //         const wLand = 0.15;
-        //         const wElev = 0.15;
-        //         let meltPressure = (
-        //             wLat * latMelt
-        //             + wCont * continentalFactor
-        //             + wLand * landMelt
-        //             - wElev * elevCooling
-        //         );
-
-        //         meltPressure = clamp01(meltPressure);
-
-        //         // global melt scale (your ice slider): lower => less melt => more ice.
-        //         // Reuse `threshold` as this scale without renaming.
-        //         const globalMelt = clamp01(threshold);
-        //         meltPressure *= globalMelt;
-
-        //         // --- DECISION ---
-        //         // ice if accumulation beats melt pressure
-        //         let effectiveAccumulation = accum;
-        //         const thermalGate = meltPressure; // no longer a multiplicative gate; keep output slot stable
-
-        //         const combined = clamp01(effectiveAccumulation - meltPressure);
-
-        //         ctx.outputs.latitudeWeighting[p] = latitudeWeighting;
-        //         ctx.outputs.elevationWeighting[p] = elevationWeighting;
-        //         ctx.outputs.landWeighting[p] = landWeighting;
-        //         ctx.outputs.moistureAvailable[p] = moistureAvailable;
-        //         ctx.outputs.combined[p] = combined;
-        //         ctx.outputs.threshold[p] = threshold;
-        //         ctx.outputs.continentalFactor[p] = continentalFactor;
-        //         ctx.outputs.thermalGate[p] = thermalGate;
-        //         ctx.outputs.effectiveAccumulation[p] = effectiveAccumulation;
-
-        //         iceMask[p] = (effectiveAccumulation > meltPressure) ? 1 : 0;
-        //     }
-
-        // },
         colorPixelsByIce_global: function (ctx: WorldContext) {
             const { width, height } = ctx.inputs;
             const {
@@ -1032,6 +566,58 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             return cy * worldW + cx;
         },
 
+        viewColorAtWorldIndex: function (
+            world: WorldContext,
+            viewType: VIEW_TYPE,
+            wIndex: number
+        ): RGB {
+            const { originalData: worldRGBA } = world.inputs;
+            const { seaLevel } = world.params;
+            const { isLandMask, iceMask, moistureAvailability, sstByLatitude } = world.derived;
+
+            const elevation = worldRGBA[wIndex * 4]; // red channel
+
+            let r: number, g: number, b: number;
+
+            // Each case gets its own explicit logic (even if repeated)
+            if (viewType === VIEW_TYPE.LAND_SEA) {
+                if (isLandMask[wIndex] === 1) {
+                    [r, g, b] = landColor(elevation, seaLevel);
+                } else {
+                    [r, g, b] = waterColor(elevation, seaLevel);
+                }
+                return [r, g, b];
+            }
+
+            if (viewType === VIEW_TYPE.LAND_SEA_ICE) {
+                if (iceMask[wIndex] === 1) {
+                    [r, g, b] = iceColor();
+                } else if (isLandMask[wIndex] === 1) {
+                    [r, g, b] = landColor(elevation, seaLevel);
+                } else {
+                    [r, g, b] = waterColor(elevation, seaLevel);
+                }
+                return [r, g, b];
+            }
+
+            if (viewType === VIEW_TYPE.MOISTURE_AVAILABILITY) {
+                const m = moistureAvailability[wIndex]; // assumed 0..1
+                r = Math.round(m * 255);
+                g = 0;
+                b = 0;
+                return [r, g, b];
+            }
+
+            if (viewType === VIEW_TYPE.SST_BY_LATITUDE) {
+                const m = sstByLatitude[wIndex]; // assumed 0..1
+                r = Math.round(m * 255);
+                g = 0;
+                b = 0;
+                return [r, g, b];
+            }
+
+            return [0, 0, 0];
+        },
 
         writeColorToPixels_global: function (
             coords: L.Coords,
@@ -1044,10 +630,10 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
             const world = this._world;
             const { width: worldW, height: worldH, originalData: worldRGBA } = world.inputs;
-            const { seaLevel } = world.params;
+            const { seaLevel, viewType } = world.params;
             const { isLandMask, iceMask, moistureAvailability } = world.derived;
 
-            const debug = false; // keep your moisture debug toggle
+            const debug = true; // keep your moisture debug toggle
 
             const imageData = new ImageData(tileW, tileH);
             const data = imageData.data;
@@ -1062,22 +648,24 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                     const elevation = worldRGBA[wIndex * 4]; // red channel as before
 
-                    let r: number, g: number, b: number;
+                    // let r: number, g: number, b: number;
 
-                    if (iceMask[wIndex] === 1) {
-                        [r, g, b] = iceColor();
-                    } else if (isLandMask[wIndex] === 1) {
-                        [r, g, b] = landColor(elevation);
-                    } else {
-                        [r, g, b] = waterColor(elevation, seaLevel);
-                    }
+                    // if (iceMask[wIndex] === 1) {
+                    //     [r, g, b] = iceColor();
+                    // } else if (isLandMask[wIndex] === 1) {
+                    //     [r, g, b] = landColor(elevation, seaLevel);
+                    // } else {
+                    //     [r, g, b] = waterColor(elevation, seaLevel);
+                    // }
 
-                    if (debug) {
-                        const m = moistureAvailability[wIndex]; // assumed 0..1
-                        r = Math.round(m * 255);
-                        g = 0;
-                        b = 0;
-                    }
+                    // if (debug) {
+                    //     const m = world.derived.moistureAvailability[wIndex]; // assumed 0..1
+                    //     // const m = world.derived.sstByLatitude[wIndex];
+                    //     r = Math.round(m * 255);
+                    //     g = 0;
+                    //     b = 0;
+                    // }
+                    const [r, g, b] = this.viewColorAtWorldIndex(world, viewType, wIndex);
 
                     data[di] = r | 0;
                     data[di + 1] = g | 0;
@@ -1112,26 +700,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             // }
 
         },
-
-        // _recolorAllTiles: function () {
-        //     const tilesObj = (this as any)._tiles as Record<string, { el: HTMLElement }>;
-        //     if (!tilesObj) return;
-
-        //     Object.values(tilesObj).forEach(({ el }) => {
-        //         if (!(el instanceof HTMLCanvasElement)) return;
-
-        //         const rec = this._tileStore.get(el);
-        //         if (!rec) return;
-
-        //         const { ctx, width, height, originalData, coords } = rec;
-
-        //         const ctxObj: ColorContext =
-        //             this.buildColorContext(originalData, width, height, coords);
-
-        //         const colored = this.colorPixels(ctxObj);
-        //         ctx.putImageData(colored, 0, 0);
-        //     });
-        // },
 
         _recolorAllTiles_global: function () {
             const tilesObj = (this as any)._tiles as Record<string, { el: HTMLElement }>;
@@ -1256,7 +824,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
     // instantiate and return
     const layer = new (CanvasLayer as any)({
         tileSize: tileSize,
-        noWrap: true,
+        // noWrap: true,
     }) as RecolorLayer;
     return layer;
 }

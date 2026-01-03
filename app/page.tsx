@@ -3,8 +3,8 @@
 
 import dynamic from "next/dynamic";
 import { useState } from "react";
-import { RecolorParams } from "./RecolorGridLayer";
 import { Slider } from "./slider"
+import { RecolorParams, VIEW_TYPE } from "./types";
 
 const Map = dynamic(() => import("./map"), {
   ssr: false,
@@ -29,6 +29,7 @@ export default function Home() {
 
     continentalBias: 0,
     continentalScale: 1.0,
+    viewType: VIEW_TYPE.LAND_SEA_ICE,
   });
   const [showAdvanced, setShowAdvanced] = useState(false);
 
@@ -40,6 +41,23 @@ export default function Home() {
       </div>
 
       <div className="h-full w-1/5 bg-black p-4 text-white" id="sliders">
+        <div className="mb-4">
+          <div className="mb-2 text-sm opacity-90">View</div>
+          <select
+            className="w-full rounded bg-white/10 px-3 py-2 text-sm text-white outline-none"
+            value={params.viewType}
+            onChange={(e) =>
+              setParams((p) => ({ ...p, viewType: e.target.value as VIEW_TYPE }))
+            }
+          >
+            {(Object.values(VIEW_TYPE) as VIEW_TYPE[]).map((v) => (
+              <option key={v} value={v} className="bg-black text-white">
+                {v}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="mb-2 text-sm opacity-90">Config</div>
         <Slider
           label={`Water level: ${params.seaLevel}`}
           min={0}

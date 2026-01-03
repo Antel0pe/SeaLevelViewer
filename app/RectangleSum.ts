@@ -152,12 +152,7 @@ export function blurMaskWithSAT_U8(
 
   if (r === 0) return src;
 
-  // Default: centered square blur window
-  const defaultWindowForRow = (_y: number, _h: number, r: number): WindowSpec => ({
-    dx0: -r, dx1: +r,
-    dy0: -r, dy1: +r,
-  });
-
+  let cur: Float32Array = src.slice();     
   let dst: Float32Array = new Float32Array(w * h);
 
   for (let pass = 0; pass < pCount; pass++) {
@@ -190,16 +185,15 @@ export function blurMaskWithSAT_U8(
       }
     }
 
-    // 4) Next pass: output becomes input (smoother each time)
     if (pass < pCount - 1) {
-      const swap = src;
-      src = dst;
-      dst = swap;
+      const tmp = cur;
+      cur = dst;
+      dst = tmp;
     }
   }
 
   // dst is already in [0..1] because it’s an average of 0/1 values
-  return dst;
+  return cur;
 }
 
 function clamp01(t: number) {
