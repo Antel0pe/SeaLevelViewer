@@ -3,6 +3,7 @@ import L from "leaflet";
 import { tileRowToLat } from "./utils";
 import { blurMaskWithSAT_U8, makeGetWindowForRow, windowByLatitudeAnchors, WindowSpec } from "./RectangleSum";
 import { RecolorParams, WorldContext, VIEW_TYPE, RGB, LayerClickResult } from "./types";
+import { computeMoistureAvailabilityDijkstra, Dir4 } from "./computeMoistureAvailabilityDijkstra";
 
 type TileRecord = {
     ctx: CanvasRenderingContext2D;
@@ -306,7 +307,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const latDeg = latByRow[y];
                 const latRad = (Math.abs(latDeg) * Math.PI) / 180;
 
-                const vaporCap = clamp01(Math.cos(latRad));
+                const vaporCap = clamp01(Math.pow(Math.cos(latRad), 3));
 
                 const rowOff = y * width;
                 for (let x = 0; x < width; x++) {
@@ -321,15 +322,115 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 return windowByLatitudeAnchors(latDeg, r);
             };
 
-            ctx.derived.moistureAvailability = blurMaskWithSAT_U8(
-                ctx.derived.sstByLatitude,
+            // ctx.derived.moistureAvailability = blurMaskWithSAT_U8(
+            //     ctx.derived.sstByLatitude,
+            //     width,
+            //     height,
+            //     width / 8,
+            //     3,
+            //     getWindowForRow
+            // );
+
+            // Put these inside computeMoisture_global right before you call computeMoistureAvailabilityDijkstra
+
+            const METERS_PER_ELEV_UNIT = 77;
+
+            // --- Cold multiplier ---
+            // Interpretation: moving into colder air forces moisture out faster (shorter e-folding length).
+            // We model this as a latitude-based multiplier >= 1.
+            //
+            // Shape notes:
+            // - 0°: ~1.0 (tropics hold moisture longer)
+            // - ~45°: ~2–3x loss
+            // - ~60°+: ~4–6x loss
+            //
+            // This is intentionally strong because your grid step is big (~50 km).
+            const coldMultiplier = (p: number) => {
+                const y = (p / width) | 0;
+                const lat = Math.abs(latByRow[y]); // 0..~85 in WebMercator
+
+                // Smooth ramp: 0 at equator, ~1 near poles
+                const t = Math.min(1, lat / 75); // treat 75° as "polar"
+                const t2 = t * t;
+
+                // Multiplicative amplification of land step cost
+                // 1 + A * t^2  (A=5 -> up to ~6x at high lat)
+                const A = 1.5;
+                return 1 + A * t2;
+            };
+
+            // --- Elevation penalty ---
+            // Interpretation: as air is forced up (orographic lift), it precipitates and loses moisture.
+            // We add an *additive* per-step penalty on land that increases with elevation.
+            //
+            // We want this to be small at low elevations and significant for major mountains.
+            // With METERS_PER_ELEV_UNIT=77, heightAboveSea is 0..~255-ish but only meaningful on land.
+            //
+            // Design:
+            // - below 500 m: ~0 penalty
+            // - 1000–2000 m: noticeable
+            // - 3000–5000 m: strong loss
+            const elevationPenalty = (u: number, v: number) => {
+                // only matters when entering land (you already only call on land v, but keep safe)
+                if (isLandMask[v] === 0) return 0;
+
+                const hu = ctx.derived.heightAboveSea[u] * METERS_PER_ELEV_UNIT;
+                const hv = ctx.derived.heightAboveSea[v] * METERS_PER_ELEV_UNIT;
+
+                const dh = hv - hu;              // meters
+                const upslope = Math.max(0, dh); // only penalize lifting
+
+                // Soft knee so tiny bumps do almost nothing
+                const D0 = 100;   // meters: start of meaningful lift
+                const D1 = 1200;  // meters: "big" lift over one step (your pixels are huge)
+                const t = Math.max(0, Math.min(1, (upslope - D0) / (D1 - D0)));
+
+                // Additive per-step penalty. Start small.
+                const Pmax = 0.06;
+                return Pmax * t * t;
+            };
+
+            const directionPenalty = (u: number, v: number, dir: Dir4) => {
+                const y = (u / width) | 0;
+                const lat = Math.abs(latByRow[y]);
+
+                // --- Tunables ---
+                const ALONG = 0.0;
+                const CROSS = 0.02;
+                const AGAINST = 0.06;
+                const POLAR = 0.05;
+
+                // 0–30°: easterlies (east → west)
+                if (lat < 30) {
+                    if (dir === 1) return ALONG;    // westward
+                    if (dir === 0) return AGAINST;  // eastward
+                    return CROSS;                   // north/south
+                }
+
+                // 30–60°: westerlies (west → east)
+                if (lat < 60) {
+                    if (dir === 0) return ALONG;    // eastward
+                    if (dir === 1) return AGAINST;  // westward
+                    return CROSS;                   // north/south
+                }
+
+                // >60°: polar – weak, chaotic, damped
+                return POLAR;
+            };
+
+
+
+            ctx.derived.moistureAvailability = computeMoistureAvailabilityDijkstra(
+                isLandMask,
+                sstByLatitude,
                 width,
                 height,
-                width / 8,
-                3,
-                getWindowForRow
+                {
+                    coldMultiplier,
+                    elevationPenalty,
+                    directionPenalty,
+                }
             );
-
             // Symmetric, centered blur window chooser (same window for every row)
             const getCenteredWindowForRow = (y: number, h: number, r: number): WindowSpec => {
                 return { dx0: -r, dx1: +r, dy0: -r, dy1: +r };
@@ -377,7 +478,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const A = 20;     // mean equator-to-pole contrast
             const T_EQ = 27;     // mean annual equatorial surface temp (°C)
             const T_POLE = -25; // mean annual polar surface temp (°C)
-            const L = 6.5;    // °C per km lapse rate
+            // const L = 6.5;    // °C per km lapse rate
+            const L = 0.0;
             const S = 12;     // seasonal amplitude scale
             const C = 20;      // summer continental warming scale
             const DELTA = 18;  // max global cooling at iceLevel=1
@@ -387,7 +489,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
             // Melt conversion: converts °C-like summer warmth into "ice units" comparable to accum
             // Since accum can be >1 if you bias/scale moisture, keep this small.
-            const k = 1 / 10;
+            const k = 1 / 20;
 
             // Compute latitude for each WORLD row once (Web Mercator, z=0 pixel space)
             const latByRow = new Float32Array(height);
@@ -522,7 +624,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 ctx.outputs.continental01[p] = continental01;
 
 
-                iceMask[p] = (iceLeft > 0) ? 1 : 0;
+                iceMask[p] = (iceLeft > 0.0) ? 1 : 0;
+                // iceMask[p] = (iceLeft > 0.05) ? 1 : 0;
             }
 
         },

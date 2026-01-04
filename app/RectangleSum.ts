@@ -193,7 +193,7 @@ export function blurMaskWithSAT_U8(
   }
 
   // dst is already in [0..1] because it’s an average of 0/1 values
-  return cur;
+  return dst;
 }
 
 function clamp01(t: number) {

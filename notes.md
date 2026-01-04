@@ -1,0 +1,7 @@
+- blurring doesnt faithfully do moisture transportation since it averages things out rather than "using up" precip
+- need to make moisture transport with djikstra legible
+    - during djikstra record predecessors, path, etc
+    - show a layer of moisture where it naturally shows moisture over ocean and fading areas over land and mountains
+- djikstra would only find highest contributing pixels but there might be cases (greenland) where multiple oceans need to converge on a location to supply enough moisture. only one ocean would not supply sufficient moisture
+- experiment with minimum ice needed to glaciate so non zero ice left after accum and melt might not be enough but minimum threshold like 0.05 or something
+    - since siberia was cold enough and probably had non zero moisture but so little ice it couldnt start glaciating? dunno?
