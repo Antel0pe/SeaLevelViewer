@@ -71,7 +71,7 @@ class MinHeapPair {
 
         // swap i <-> m
         const tn = this.nodes[i]; this.nodes[i] = this.nodes[m]; this.nodes[m] = tn;
-        const tk = this.keys[i];  this.keys[i]  = this.keys[m];  this.keys[m]  = tk;
+        const tk = this.keys[i]; this.keys[i] = this.keys[m]; this.keys[m] = tk;
 
         i = m;
       }
@@ -123,9 +123,10 @@ export function computeMoistureAvailabilityDijkstra(
   }
 
   const stepCostTo = (u: number, v: number, dir: Dir4): number => {
-    if (isLand[v] === 0) return oceanStepCost;
+    // if (isLand[v] === 0) return oceanStepCost;
+    const isOcean = (isLand[v] === 0);
 
-    let c = baselineLandStep;
+    let c = isOcean ? oceanStepCost : baselineLandStep;
     if (coldMultiplier) c *= clampAtLeast1(coldMultiplier(v));
     if (elevationPenalty) c += clampNonNeg(elevationPenalty(u, v, dir));
     if (directionPenalty) c += clampNonNeg(directionPenalty(u, v, dir));

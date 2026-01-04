@@ -5,3 +5,5 @@
 - djikstra would only find highest contributing pixels but there might be cases (greenland) where multiple oceans need to converge on a location to supply enough moisture. only one ocean would not supply sufficient moisture
 - experiment with minimum ice needed to glaciate so non zero ice left after accum and melt might not be enough but minimum threshold like 0.05 or something
     - since siberia was cold enough and probably had non zero moisture but so little ice it couldnt start glaciating? dunno?
+- making something explorable+explainable means it should be easy to debug too
+    - if youre having a hard time debugging or figuring out why its doing something, you should make things that make it easier to see because it helps debug and the overall purpose

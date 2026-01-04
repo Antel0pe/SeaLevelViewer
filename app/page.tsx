@@ -18,7 +18,7 @@ export default function Home() {
 
     latitudeBiasExponent: 1,
     elevationOfIce: 3000,
-    seaBias: 0.7,
+    seaBias: 0.0,
     landBias: 0.0,
     elevationModifier: 10.0,
 

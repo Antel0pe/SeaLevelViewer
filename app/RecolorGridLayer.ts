@@ -153,6 +153,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                     iceSupply: new Float32Array(n),
                     iceLeft: new Float32Array(n),
                     continental01: new Float32Array(n),
+                    warmFraction: new Float32Array(n),
+                    coldFraction: new Float32Array(n),
                 },
             };
         },
@@ -307,7 +309,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const latDeg = latByRow[y];
                 const latRad = (Math.abs(latDeg) * Math.PI) / 180;
 
-                const vaporCap = clamp01(Math.pow(Math.cos(latRad), 3));
+                const vaporCap = clamp01(Math.pow(Math.cos(latRad), 1.5));
 
                 const rowOff = y * width;
                 for (let x = 0; x < width; x++) {
@@ -479,9 +481,9 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const T_EQ = 27;     // mean annual equatorial surface temp (°C)
             const T_POLE = -25; // mean annual polar surface temp (°C)
             // const L = 6.5;    // °C per km lapse rate
-            const L = 0.0;
-            const S = 12;     // seasonal amplitude scale
-            const C = 20;      // summer continental warming scale
+            const L = 3.5; // due to tile resolution
+            const S = 15;     // seasonal amplitude scale
+            const C = 10;      // summer continental warming scale
             const DELTA = 18;  // max global cooling at iceLevel=1
             const ELEV_KM_MAX = 5;   // maps elevationFactor (0..1) to 0..5 km
             const METERS_PER_ELEV_UNIT = 77; // choose this based on your source DEM
@@ -489,7 +491,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
             // Melt conversion: converts °C-like summer warmth into "ice units" comparable to accum
             // Since accum can be >1 if you bias/scale moisture, keep this small.
-            const k = 1 / 20;
+            const k = 0.05;
 
             // Compute latitude for each WORLD row once (Web Mercator, z=0 pixel space)
             const latByRow = new Float32Array(height);
@@ -559,7 +561,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const f = Math.pow(Math.cos(latRad), 1.3);
                 const T_lat = T_POLE + (T_EQ - T_POLE) * f;
 
-
                 // const elevation_km = ELEV_KM_MAX * elevationFactor;
                 const T_elev = -L * elevation_km;
 
@@ -567,25 +568,35 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 const T_mean = T_lat + T_elev + dT_global;
 
-                const T_season = S * Math.sin(latRad);
-
                 const continentalRaw =
                     (continentalValue[p] * continentalScale) + continentalBias;
                 const COAST = 0.5;
                 const continental01 = clamp01((continentalRaw - COAST) / (1 - COAST));
 
                 const T_cont = C * continental01;
+                // continental factor makes seasonal swings bigger
+                const T_season = S * Math.sin(latRad) + T_cont;
 
                 const Tw = T_mean - T_season;
-                const Ts = T_mean + T_season + T_cont;
+                const Ts = T_mean + T_season;
 
                 // --- ICE FORMATION + MELT ---
                 // if winter is freezing (Tw <= 0), all available snow becomes ice supply
-                const ice = (Tw <= 0) ? accum : 0;
+                const coldFraction =
+                    (Tw >= 0) ? 0 :
+                        clamp01((-Tw) / (Ts - Tw));
+
+                const ice = accum * coldFraction;
+
 
                 // only melts if summer is above freezing
                 const meltPressure = Math.max(0, Ts);
-                const melt = k * meltPressure;
+                // fraction of the year above 0°C (linear "range" approximation)
+                // logic here is that a summer temp range from 0 to 5 is very different from temp range of -15 to 5 even though both have summer peak of 5, the time spent above freezing is different. so look at how long you spend above 0 relative to temp then apply as melt pressure
+                const denom = Ts - Tw; // = 2*T_season
+                const warmFraction = (meltPressure <= 0 || denom <= 1e-6) ? 0 : clamp01(meltPressure / denom);
+                // melt scales by how long it's actually above freezing
+                const melt = k * meltPressure * warmFraction;
 
                 const iceLeft = ice - melt;
 
@@ -622,9 +633,11 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 ctx.outputs.iceSupply[p] = ice;
                 ctx.outputs.iceLeft[p] = iceLeft;
                 ctx.outputs.continental01[p] = continental01;
+                ctx.outputs.warmFraction[p] = warmFraction;
+                ctx.outputs.coldFraction[p] = coldFraction;
 
 
-                iceMask[p] = (iceLeft > 0.0) ? 1 : 0;
+                iceMask[p] = (iceLeft > 0.05) ? 1 : 0;
                 // iceMask[p] = (iceLeft > 0.05) ? 1 : 0;
             }
 
@@ -677,6 +690,23 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const { originalData: worldRGBA } = world.inputs;
             const { seaLevel } = world.params;
             const { isLandMask, iceMask, moistureAvailability, sstByLatitude } = world.derived;
+            const out = world.outputs;
+            // const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+
+            const tempDivergingColor = (v: number, scale: number): RGB => {
+                // scale is the magnitude where color saturates (tune per field)
+                const t = clamp01(Math.abs(v) / scale);
+                if (v < 0) {
+                    // blue for negative
+                    const b = Math.round(t * 255);
+                    return [0, 0, b];
+                } else {
+                    // red for positive
+                    const r = Math.round(t * 255);
+                    return [r, 0, 0];
+                }
+            };
+
 
             const elevation = worldRGBA[wIndex * 4]; // red channel
 
@@ -718,6 +748,50 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 b = 0;
                 return [r, g, b];
             }
+
+            if (viewType === VIEW_TYPE.T_MEAN) {
+                const T = out.T_mean[wIndex]; // degrees C (or your units)
+                // Tune this: 40 means saturate at +/-40C
+                return tempDivergingColor(T, 40);
+            }
+
+            if (viewType === VIEW_TYPE.CONTINENTAL01) {
+                // You asked "same for continental": interpret as a signed effect.
+                // If your continental01 is truly 0..1 (not signed), this will show only red.
+                // If you actually want the temperature effect, use out.T_cont[wIndex] instead.
+                const c = out.continental01[wIndex];
+                // Option A (as requested literally): treat 0.5 as neutral, <0.5 blue, >0.5 red
+                const signed = (c - 0.5) * 2; // now roughly [-1..1]
+                return tempDivergingColor(signed, 1);
+            }
+
+            if (viewType === VIEW_TYPE.TW_PLUS_TS) {
+                const v = out.Tw[wIndex] + out.Ts[wIndex];
+                // Tune this: seasonal sums can be big; start with 60
+                return tempDivergingColor(v, 60);
+            }
+
+            if (viewType === VIEW_TYPE.ICE) {
+                // "potential ice accumulation" -> your ice variable stored as effectiveAccumulation
+                const ice = out.effectiveAccumulation[wIndex]; // expected 0..1
+                const t = clamp01(ice);
+                const v = Math.round(t * 255);
+                return [v, v, v]; // white intensity
+            }
+
+            if (viewType === VIEW_TYPE.MELT) {
+                const m = out.melt[wIndex]; // you said: "more positive -> more red"
+                // If melt is already 0..1, set scale=1. If it's in other units, tune.
+                const t = clamp01(m / 1);
+                return [Math.round(t * 255), 0, 0];
+            }
+
+            if (viewType === VIEW_TYPE.T_ELEV) {
+                const Te = out.T_elev[wIndex]; // degrees C (or your units)
+                // This is usually negative; saturate around ~20C by default
+                return tempDivergingColor(Te, 20);
+            }
+
 
             return [0, 0, 0];
         },
@@ -918,6 +992,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 iceLeft: out.iceLeft[wIndex],
                 continental01: out.continental01[wIndex],
                 sstByLatitude: der.sstByLatitude[wIndex],
+                warmFraction: out.warmFraction[wIndex],
+                coldFraction: out.coldFraction[wIndex],
 
             };
         },

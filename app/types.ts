@@ -44,16 +44,25 @@ export type WorldContext = {
         iceSupply: Float32Array; // ice before melt (your `ice`)
         iceLeft: Float32Array;   // iceSupply - melt (unclamped)
         continental01: Float32Array;
+        warmFraction: Float32Array;
+        coldFraction: Float32Array;
+
     };
 };
 
 export type RGB = readonly [number, number, number];
 
 export enum VIEW_TYPE {
-  LAND_SEA = "Land / Sea",
-  LAND_SEA_ICE = "Land / Sea / Ice",
-  MOISTURE_AVAILABILITY = "Moisture Availability",
-  SST_BY_LATITUDE = "SST by Latitude",
+    LAND_SEA = "Land / Sea",
+    LAND_SEA_ICE = "Land / Sea / Ice",
+    MOISTURE_AVAILABILITY = "Moisture Availability",
+    SST_BY_LATITUDE = "SST by Latitude",
+    T_MEAN = "T_mean (Mean Temperature)",
+    CONTINENTAL01 = "Continental01 (Continental Effect)",
+    TW_PLUS_TS = "Tw + Ts (Winter + Summer)",
+    ICE = "Ice (Potential Accumulation)",
+    MELT = "Melt (Melt Pressure)",
+    T_ELEV = "T_elev (Elevation Temperature)",
 }
 
 export type RecolorParams = {
@@ -122,4 +131,7 @@ export type LayerClickResult = {
     iceLeft: number;
     continental01: number;
     sstByLatitude: number;
+    warmFraction: number;
+    coldFraction: number;
+
 };

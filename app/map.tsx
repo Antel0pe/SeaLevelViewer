@@ -70,7 +70,7 @@ export default function TopographyMap({ params }: MapProps) {
     <div><b>landWeighting</b>: ${res.landWeighting.toFixed(4)} (isLand=${res.isLand})</div>
     <div><b>sstByLatitude</b>: ${res.sstByLatitude.toFixed(4)}</div>
     <div><b>moistureAvailable</b>: ${res.moistureAvailable.toFixed(4)} (raw=${res.moistureAvailability.toFixed(4)})</div>
-    <div><b>Continental Factor</b>: ${res.continentalFactor.toFixed(4)} (raw=${res.continentalValue.toFixed(4)})</div>
+    <div><b>Continental Factor</b>: ${res.continental01.toFixed(4)} (raw=${res.continentalFactor.toFixed(4)})</div>
 
     <div><b>thermalGate</b>: ${res.thermalGate.toFixed(4)} (1=Tw<=0)</div>
     <div><b>effectiveAccumulation</b>: ${res.effectiveAccumulation.toFixed(4)}</div>
@@ -81,15 +81,18 @@ export default function TopographyMap({ params }: MapProps) {
     <div><b>T_elev</b>: ${res.T_elev.toFixed(4)}</div>
     <div><b>dT_global</b>: ${res.dT_global.toFixed(4)}</div>
     <div><b>T_mean</b>: ${res.T_mean.toFixed(4)}</div>
-    <div><b>T_season</b>: ${res.T_season.toFixed(4)}</div>
     <div><b>T_cont</b>: ${res.T_cont.toFixed(4)} (continental01=${res.continental01.toFixed(4)})</div>
+    <div><b>T_season</b>: ${res.T_season.toFixed(4)}</div>
 
     <div><b>Tw</b>: ${res.Tw.toFixed(4)}</div>
     <div><b>Ts</b>: ${res.Ts.toFixed(4)}</div>
 
     <div><b>accum</b>: ${res.accum.toFixed(4)}</div>
     <div><b>iceSupply</b>: ${res.iceSupply.toFixed(4)}</div>
+    <div><b>coldFraction</b>: ${res.coldFraction.toFixed(4)}</div>
     <div><b>meltPressure</b>: ${res.meltPressure.toFixed(4)}</div>
+<div><b>warmFraction</b>: ${res.warmFraction.toFixed(4)}</div>
+
     <div><b>melt</b>: ${res.melt.toFixed(4)}</div>
     <div><b>iceLeft</b>: ${res.iceLeft.toFixed(4)}</div>
 
