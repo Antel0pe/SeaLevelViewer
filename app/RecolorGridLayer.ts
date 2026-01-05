@@ -124,6 +124,9 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                     moistureAvailability: new Float32Array(n),
                     sstByLatitude: new Float32Array(n),
                     continentalValue: new Float32Array(n),
+                    moistureSrc: new Int32Array(n),
+                    moisturePrev: new Int32Array(n),
+                    moistureCost: new Float64Array(n),
                 },
                 outputs: {
                     latitudeWeighting: new Float32Array(n),
@@ -384,11 +387,11 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 // Soft knee so tiny bumps do almost nothing
                 const D0 = 100;   // meters: start of meaningful lift
-                const D1 = 1200;  // meters: "big" lift over one step (your pixels are huge)
+                const D1 = 200;  // meters: "big" lift over one step (your pixels are huge)
                 const t = Math.max(0, Math.min(1, (upslope - D0) / (D1 - D0)));
 
                 // Additive per-step penalty. Start small.
-                const Pmax = 0.06;
+                const Pmax = 0.1;
                 return Pmax * t * t;
             };
 
@@ -398,8 +401,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 // --- Tunables ---
                 const ALONG = 0.0;
-                const CROSS = 0.02;
-                const AGAINST = 0.06;
+                const CROSS = 0.04;
+                const AGAINST = 0.08;
                 const POLAR = 0.05;
 
                 // 0–30°: easterlies (east → west)
@@ -422,17 +425,23 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
 
 
-            ctx.derived.moistureAvailability = computeMoistureAvailabilityDijkstra(
+            let moistureDjikstraResult = computeMoistureAvailabilityDijkstra(
                 isLandMask,
                 sstByLatitude,
                 width,
                 height,
                 {
-                    coldMultiplier,
+                    // coldMultiplier,
                     elevationPenalty,
                     directionPenalty,
                 }
             );
+
+            ctx.derived.moistureAvailability = moistureDjikstraResult.moisture;
+            ctx.derived.moistureSrc = moistureDjikstraResult.src;
+            ctx.derived.moisturePrev = moistureDjikstraResult.prev;
+            ctx.derived.moistureCost = moistureDjikstraResult.cost;
+
             // Symmetric, centered blur window chooser (same window for every row)
             const getCenteredWindowForRow = (y: number, h: number, r: number): WindowSpec => {
                 return { dx0: -r, dx1: +r, dy0: -r, dy1: +r };
@@ -441,6 +450,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const landMaskF32 = new Float32Array(width * height);
             for (let p = 0; p < width * height; p++) landMaskF32[p] = isLandMask[p]; // 0 or 1
 
+            //  potentially need to rework this as blur may not be the correct way to think about continental effect
+            // continental depends on if you have westerly wind or even scaling with latitude 
             ctx.derived.continentalValue = blurMaskWithSAT_U8(
                 landMaskF32,
                 width,
@@ -481,7 +492,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const T_EQ = 27;     // mean annual equatorial surface temp (°C)
             const T_POLE = -25; // mean annual polar surface temp (°C)
             // const L = 6.5;    // °C per km lapse rate
-            const L = 3.5; // due to tile resolution
+            const L = 1.5; // due to tile resolution
             const S = 15;     // seasonal amplitude scale
             const C = 10;      // summer continental warming scale
             const DELTA = 18;  // max global cooling at iceLevel=1
@@ -687,7 +698,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             viewType: VIEW_TYPE,
             wIndex: number
         ): RGB {
-            const { originalData: worldRGBA } = world.inputs;
+            const { originalData: worldRGBA, width, height } = world.inputs;
             const { seaLevel } = world.params;
             const { isLandMask, iceMask, moistureAvailability, sstByLatitude } = world.derived;
             const out = world.outputs;
@@ -792,6 +803,105 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 return tempDivergingColor(Te, 20);
             }
 
+            if (viewType === VIEW_TYPE.COST) {
+                const cost = world.derived.moistureCost[wIndex];
+                // cost: 0 = black, more negative = more red
+                // pick a scale that makes sense; start with 10 and tune
+                const t = clamp01(cost / 5);
+                const r = Math.round(t * 255);
+                return [r, 0, 0];
+            }
+
+            if (viewType === VIEW_TYPE.SRC) {
+                const s = world.derived.moistureSrc[wIndex];
+
+                // unreachable / unset
+                if (s < 0) return [0, 0, 0];
+
+                // normalize src id
+                const t = clamp01(s / (width * height));
+
+                // simple HSV-style hue sweep (no helper needed)
+                const hue = (1 - t) * 240; // 240=blue → 0=red
+                const c = 1;
+                const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+
+                let r1 = 0, g1 = 0, b1 = 0;
+                if (hue < 60) { r1 = c; g1 = x; b1 = 0; }
+                else if (hue < 120) { r1 = x; g1 = c; b1 = 0; }
+                else if (hue < 180) { r1 = 0; g1 = c; b1 = x; }
+                else if (hue < 240) { r1 = 0; g1 = x; b1 = c; }
+
+                return [
+                    Math.round(r1 * 255),
+                    Math.round(g1 * 255),
+                    Math.round(b1 * 255),
+                ];
+            }
+
+            if (viewType === VIEW_TYPE.COST_STEP) {
+                const a = wIndex;
+                const prev = world.derived.moisturePrev[a];
+
+                // no predecessor (source or unreachable)
+                if (prev < 0) return [0, 0, 0];
+
+                const costA = world.derived.moistureCost[a];
+                const costP = world.derived.moistureCost[prev];
+
+                const delta = costA - costP;
+
+                // only show positive step cost; negative -> black
+                // tune scale as needed (start ~1 or ~5 depending on magnitudes)
+                const t = clamp01(delta / 0.1);
+                const r = Math.round(t * 255);
+
+                return [r, 0, 0];
+            }
+            if (viewType === VIEW_TYPE.COST_FROM_SRC) {
+                const a = wIndex;
+                const src = world.derived.moistureSrc[a];
+
+                // unreachable / unset
+                if (src < 0) return [0, 0, 0];
+
+                const costA = world.derived.moistureCost[a];
+                const costS = world.derived.moistureCost[src];
+
+                const totalFromSrc = costA - costS; // src -> a
+
+                // only show positive; negative -> black
+                // tune this scale to your typical magnitudes
+                const t = clamp01(totalFromSrc / 2.0);
+                const r = Math.round(t * 255);
+
+                return [r, 0, 0];
+            }
+
+            if (viewType === VIEW_TYPE.PREV_DIR) {
+                const p = world.derived.moisturePrev[wIndex];
+
+                // no predecessor (source or unreachable)
+                if (p < 0) return [0, 0, 0];
+
+                const ax = wIndex % width;
+                const ay = (wIndex / width) | 0;
+                const px = p % width;
+                const py = (p / width) | 0;
+
+                // prev is one of the 4-neighbors: determine which direction prev -> a came from
+                // North (prev above current)
+                if (px === ax && py === ay - 1) return [255, 0, 0];      // red
+                // East (prev right of current)
+                if (px === ax + 1 && py === ay) return [0, 255, 0];    // green
+                // South (prev below current)
+                if (px === ax && py === ay + 1) return [0, 0, 255];      // blue
+                // West (prev left of current)
+                if (px === ax - 1 && py === ay) return [255, 255, 255];  // white
+
+                // unexpected (diagonal/invalid): yellow
+                return [255, 255, 0];
+            }
 
             return [0, 0, 0];
         },

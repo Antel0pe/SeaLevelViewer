@@ -11,9 +11,12 @@ export type WorldContext = {
         heightAboveSea: Uint8Array;      // 0 for sea, else (elev - seaLevel)
         iceMask: Uint8Array;
         effectiveSeaLevel: number;
-        moistureAvailability: Float32Array;
         sstByLatitude: Float32Array;
         continentalValue: Float32Array;
+        moistureAvailability: Float32Array;
+        moistureSrc: Int32Array;
+        moisturePrev: Int32Array;
+        moistureCost: Float64Array;
     };
     outputs: {
         latitudeWeighting: Float32Array;
@@ -63,6 +66,11 @@ export enum VIEW_TYPE {
     ICE = "Ice (Potential Accumulation)",
     MELT = "Melt (Melt Pressure)",
     T_ELEV = "T_elev (Elevation Temperature)",
+    COST = "Moisture Cost",
+SRC = "Moisture Source (src)",
+COST_STEP = "Moisture Cost Step (Δcost)",
+COST_FROM_SRC = "Moisture Cost From Source (Δcost src→a)",
+  PREV_DIR = "Prev Direction",
 }
 
 export type RecolorParams = {
@@ -133,5 +141,11 @@ export type LayerClickResult = {
     sstByLatitude: number;
     warmFraction: number;
     coldFraction: number;
+};
 
+export type MoistureDijkstraResult = {
+    moisture: Float32Array;
+    cost: Float64Array;   // total best-path cost to each pixel
+    src: Int32Array;
+    prev: Int32Array;
 };

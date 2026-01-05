@@ -1,3 +1,5 @@
+import { MoistureDijkstraResult } from "./types";
+
 export type Dir4 = 0 | 1 | 2 | 3;
 
 export type MoistureDijkstraParams = {
@@ -87,7 +89,7 @@ export function computeMoistureAvailabilityDijkstra(
   width: number,
   height: number,
   params: MoistureDijkstraParams = {}
-): Float32Array {
+): MoistureDijkstraResult {
   const N = width * height;
   if (isLand.length !== N) throw new Error(`isLand length ${isLand.length} != ${N}`);
   if (sourceStrength.length !== N) throw new Error(`sourceStrength length ${sourceStrength.length} != ${N}`);
@@ -111,6 +113,10 @@ export function computeMoistureAvailabilityDijkstra(
   const cost = new Float64Array(N);
   for (let i = 0; i < N; i++) cost[i] = Infinity;
 
+  const prev = new Int32Array(N);
+  const src = new Int32Array(N);
+  for (let i = 0; i < N; i++) { prev[i] = -1; src[i] = -1; }
+
   const heap = new MinHeapPair();
 
   // Multi-source init (ocean pixels)
@@ -119,6 +125,8 @@ export function computeMoistureAvailabilityDijkstra(
     const s = clampSourceStrength(sourceStrength[p], eps);
     const c0 = -Math.log(s);
     cost[p] = c0;
+    prev[p] = -1;
+    src[p] = p;        // this ocean pixel is its own source
     heap.push(p, c0);
   }
 
@@ -148,25 +156,45 @@ export function computeMoistureAvailabilityDijkstra(
     if (x + 1 < width) {
       const v = u + 1;
       const nv = cu + stepCostTo(u, v, 0);
-      if (nv < cost[v]) { cost[v] = nv; heap.push(v, nv); }
+      if (nv < cost[v]) {
+        cost[v] = nv;
+        prev[v] = u;
+        src[v] = src[u];   // inherit ultimate source
+        heap.push(v, nv);
+      }
     }
     // west
     if (x - 1 >= 0) {
       const v = u - 1;
       const nv = cu + stepCostTo(u, v, 1);
-      if (nv < cost[v]) { cost[v] = nv; heap.push(v, nv); }
+      if (nv < cost[v]) {
+        cost[v] = nv;
+        prev[v] = u;
+        src[v] = src[u];   // inherit ultimate source
+        heap.push(v, nv);
+      }
     }
     // south
     if (y + 1 < height) {
       const v = u + width;
       const nv = cu + stepCostTo(u, v, 2);
-      if (nv < cost[v]) { cost[v] = nv; heap.push(v, nv); }
+      if (nv < cost[v]) {
+        cost[v] = nv;
+        prev[v] = u;
+        src[v] = src[u];   // inherit ultimate source
+        heap.push(v, nv);
+      }
     }
     // north
     if (y - 1 >= 0) {
       const v = u - width;
       const nv = cu + stepCostTo(u, v, 3);
-      if (nv < cost[v]) { cost[v] = nv; heap.push(v, nv); }
+      if (nv < cost[v]) {
+        cost[v] = nv;
+        prev[v] = u;
+        src[v] = src[u];   // inherit ultimate source
+        heap.push(v, nv);
+      }
     }
   }
 
@@ -175,5 +203,5 @@ export function computeMoistureAvailabilityDijkstra(
     const c = cost[p];
     moisture[p] = Number.isFinite(c) ? Math.exp(-c) : 0;
   }
-  return moisture;
+  return { moisture, src, prev, cost };
 }
