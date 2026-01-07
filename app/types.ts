@@ -62,6 +62,8 @@ export enum VIEW_TYPE {
     SST_BY_LATITUDE = "SST by Latitude",
     T_MEAN = "T_mean (Mean Temperature)",
     CONTINENTAL01 = "Continental01 (Continental Effect)",
+      TW = "Tw (Winter Temperature)",
+  TS = "Ts (Summer Temperature)",
     TW_PLUS_TS = "Tw + Ts (Winter + Summer)",
     ICE = "Ice (Potential Accumulation)",
     MELT = "Melt (Melt Pressure)",

@@ -648,7 +648,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 ctx.outputs.coldFraction[p] = coldFraction;
 
 
-                iceMask[p] = (iceLeft > 0.05) ? 1 : 0;
+                iceMask[p] = (iceLeft > 0.0) ? 1 : 0;
                 // iceMask[p] = (iceLeft > 0.05) ? 1 : 0;
             }
 
@@ -901,6 +901,18 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 // unexpected (diagonal/invalid): yellow
                 return [255, 255, 0];
+            }
+
+            if (viewType === VIEW_TYPE.TW) {
+                const Tw = out.Tw[wIndex];
+                // Tune this: winter temps can be colder; start ~40 like T_mean, adjust if needed
+                return tempDivergingColor(Tw, 40);
+            }
+
+            if (viewType === VIEW_TYPE.TS) {
+                const Ts = out.Ts[wIndex];
+                // Tune this: summer temps; start ~40, adjust if needed
+                return tempDivergingColor(Ts, 40);
             }
 
             return [0, 0, 0];

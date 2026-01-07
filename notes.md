@@ -9,3 +9,4 @@
     - if youre having a hard time debugging or figuring out why its doing something, you should make things that make it easier to see because it helps debug and the overall purpose
 - maybe make some sort of "onboarding" experience that you can play that walks you through the different views and how the model decides how it comes to a decision. something cool to show the brains of how it works and then compare it a real picture maybe the reference you have or some other real dataset
 - upload layers/maps for glacier extent based on real datasets
+- generate satellite images that take out modern human settlement and then based on ice age coverage and thickness generates realistic satellite maps showing lgm ice
