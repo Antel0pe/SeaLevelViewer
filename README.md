@@ -48,3 +48,6 @@ bun dev
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
+
+## Data Sources
+https://www.worldclim.org/data/v1.4/paleo1.4.html
