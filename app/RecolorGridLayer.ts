@@ -400,10 +400,10 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const lat = Math.abs(latByRow[y]);
 
                 // --- Tunables ---
-                const ALONG = 0.0;
-                const CROSS = 0.04;
-                const AGAINST = 0.08;
-                const POLAR = 0.05;
+                const ALONG = 0.01;
+                const CROSS = 1;
+                const AGAINST = 1;
+                const POLAR = 1;
 
                 // 0–30°: easterlies (east → west)
                 if (lat < 30) {

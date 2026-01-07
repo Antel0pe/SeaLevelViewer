@@ -23,9 +23,13 @@ from pathlib import Path
 import numpy as np
 import rasterio
 import matplotlib.pyplot as plt
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv()
 
 # ---------------- CONFIG ----------------
-BIO_DIR = Path(r"/mnt/c/Users/dmmsp/Downloads/cclgmbi_10m")  # <-- change
+BIO_DIR = Path(os.environ["DOWNLOADS_DIR"]) / "cclgmbi_10m"
 OUT_DIR = Path("./bioclim_pngs")
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 

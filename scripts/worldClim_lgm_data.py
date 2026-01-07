@@ -14,9 +14,11 @@ import os
 import numpy as np
 import rasterio
 import matplotlib.pyplot as plt
+from dotenv import load_dotenv
 
+load_dotenv()
 # ---------------- CONFIG ----------------
-base = r"/mnt/c/Users/dmmsp/Downloads"
+base = os.environ["DOWNLOADS_DIR"]
 
 pr_dir = os.path.join(base, "cclgmpr_10m")
 tn_dir = os.path.join(base, "cclgmtn_10m")
