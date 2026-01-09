@@ -14,7 +14,7 @@ def resolve_paths():
     downloads_dir = Path(os.environ["SEA_LEVEL_SCRIPTS_DIR"])
 
     in_nc = era5_raw_dir / "evap-precip-climatology.nc"
-    out_png = downloads_dir / "era5_evap-precip.png"
+    out_png = downloads_dir / "era5_precip_test_color_scales.png"
 
     out_png.parent.mkdir(parents=True, exist_ok=True)
     return in_nc, out_png
@@ -82,12 +82,52 @@ def scale_0_to_vmax(a: np.ndarray, vmax: float) -> np.ndarray:
     out[~np.isfinite(a)] = 0
     return out
 
+def scale_0_to_vmax_power(a: np.ndarray, vmax: float, gamma: float = 0.5) -> np.ndarray:
+    """
+    Scale array to 0..255 using a power-law (gamma < 1 boosts low values).
+
+    Parameters
+    ----------
+    a : np.ndarray
+        Input array (assumed >= 0).
+    vmax : float
+        Reference maximum (e.g. 99th percentile).
+    gamma : float
+        Power-law exponent. <1 boosts inland / low values.
+        Typical: 0.4–0.6
+    """
+    a = a.astype(np.float32, copy=False)
+    out = np.zeros_like(a, dtype=np.uint8)
+
+    if not np.isfinite(vmax) or vmax <= 0:
+        return out
+
+    # Normalize to [0, 1]
+    scaled = np.clip(a / float(vmax), 0.0, 1.0)
+
+    # Power-law (gamma) transform
+    scaled = np.power(scaled, gamma)
+
+    # Map to 8-bit
+    out = (scaled * 255.0).astype(np.uint8)
+
+    # Mask invalid input
+    out[~np.isfinite(a)] = 0
+    return out
+
+
 
 def encode_evap_precip_png(evap_pos: np.ndarray, precip: np.ndarray, vmax: float) -> bytes:
     # Red = evaporation, Blue = precip, same scale
-    r = scale_0_to_vmax(evap_pos, vmax)
+
+    r = scale_0_to_vmax_power(evap_pos, vmax)
+    r = np.zeros_like(r, dtype=np.uint8)
+
     g = np.zeros_like(r, dtype=np.uint8)
-    b = scale_0_to_vmax(precip, vmax)
+
+    b = scale_0_to_vmax_power(precip, vmax)
+    # b = np.zeros_like(r, dtype=np.uint8)
+
     a = np.full_like(r, 255, dtype=np.uint8)
 
     rgba = np.dstack([r, g, b, a])
