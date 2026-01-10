@@ -10,6 +10,7 @@ export type MoistureDijkstraParams = {
   coldMultiplier?: (p: number) => number; // >=1
   elevationPenalty?: (u: number, v: number, dir: Dir4) => number; // >=0
   directionPenalty?: (u: number, v: number, dir: Dir4) => number; // >=0
+  continentalPenalty?: (u: number, v: number, dir: Dir4) => number; // >=0
   treatDiagonal?: false;
 };
 
@@ -106,6 +107,7 @@ export function computeMoistureAvailabilityDijkstra(
   const coldMultiplier = params.coldMultiplier;
   const elevationPenalty = params.elevationPenalty;
   const directionPenalty = params.directionPenalty;
+  const continentalPenalty = params.continentalPenalty;
 
   const eps = 1e-6;
 
@@ -138,6 +140,7 @@ export function computeMoistureAvailabilityDijkstra(
     if (coldMultiplier) c *= clampAtLeast1(coldMultiplier(v));
     if (elevationPenalty) c += clampNonNeg(elevationPenalty(u, v, dir));
     if (directionPenalty) c += clampNonNeg(directionPenalty(u, v, dir));
+    if (!isOcean && continentalPenalty) c += clampNonNeg(continentalPenalty(u, v, dir));
     return c < 0 ? 0 : c;
   };
 

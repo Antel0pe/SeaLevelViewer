@@ -336,7 +336,74 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             //     getWindowForRow
             // );
 
-            // Put these inside computeMoisture_global right before you call computeMoistureAvailabilityDijkstra
+            // Symmetric, centered blur window chooser (same window for every row)
+            const getCenteredWindowForRow = (y: number, h: number, r: number): WindowSpec => {
+                return { dx0: -r, dx1: +r, dy0: -r, dy1: +r };
+            };
+
+            const getContinentalWindowForRow = (y: number, h: number, r: number): WindowSpec => {
+                const latDeg = latByRow[y];
+                const lat = Math.abs(latDeg);
+
+                const dy0 = -r;
+                const dy1 = +r;
+
+                // Max bias amount (0..1 of r)
+                const BIAS_MAX = 0.9;
+
+                // Transition half-width in degrees around band boundaries
+                const TRANS = 10;
+
+                const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+                const smoothstep = (a: number, b: number, x: number) => {
+                    const t = clamp01((x - a) / (b - a));
+                    return t * t * (3 - 2 * t);
+                };
+
+                // Returns a multiplier in [0,1] that goes to 0 at boundary,
+                // and to 1 outside the ±TRANS zone around that boundary.
+                const boundaryFade = (boundary: number) => {
+                    const d = Math.abs(lat - boundary);
+                    // d=0 -> 0, d>=TRANS -> 1
+                    return smoothstep(0, TRANS, d);
+                };
+
+                // Which way the prevailing winds say "upwind" points
+                // 0–30: bias right, 30–60: bias left, >60: bias right
+                const biasRight = (lat < 30) || (lat >= 60);
+
+                // Reduce bias near boundaries (30 and 60)
+                const fade30 = boundaryFade(30);
+                const fade60 = boundaryFade(60);
+                const fade = Math.min(fade30, fade60); // if near either boundary, reduce
+
+                const bias = BIAS_MAX * fade;          // 0..BIAS_MAX
+                const shift = Math.round(bias * r);
+
+                const centerShift = biasRight ? +shift : -shift;
+
+                const dx0 = -r + centerShift;
+                const dx1 = +r + centerShift;
+
+                return { dx0, dx1, dy0, dy1 };
+            };
+
+
+
+
+            const landMaskF32 = new Float32Array(width * height);
+            for (let p = 0; p < width * height; p++) landMaskF32[p] = isLandMask[p]; // 0 or 1
+
+            //  potentially need to rework this as blur may not be the correct way to think about continental effect
+            // continental depends on if you have westerly wind or even scaling with latitude 
+            ctx.derived.continentalValue = blurMaskWithSAT_U8(
+                landMaskF32,
+                width,
+                height,
+                width / 8,
+                3,
+                getContinentalWindowForRow
+            );
 
             const METERS_PER_ELEV_UNIT = 77;
 
@@ -400,10 +467,10 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const lat = Math.abs(latByRow[y]);
 
                 // --- Tunables ---
-                const ALONG = 0.01;
-                const CROSS = 1;
-                const AGAINST = 1;
-                const POLAR = 1;
+                const ALONG = 0.0;
+                const CROSS = 0.04;
+                const AGAINST = 0.08;
+                const POLAR = 0.05;
 
                 // 0–30°: easterlies (east → west)
                 if (lat < 30) {
@@ -423,6 +490,26 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 return POLAR;
             };
 
+            const continentalPenalty = (u: number, v: number, dir: Dir4) => {
+                // Only penalize land
+                if (isLandMask[v] === 0) return 0;
+
+                // Continental signal: ~0 near coasts, ~1 deep interior
+                const c = ctx.derived.continentalValue[v];
+
+                // --- Tunables ---
+                const COAST_THRESHOLD = 0.55; // below this = effectively maritime
+                const GAMMA = 2.5;            // nonlinearity (deep interiors matter most)
+                const PMAX = 0.5;            // max additive cost per land step
+
+                // Push coastal band to ~0, ramp inland
+                const t = Math.max(0, Math.min(1, (c - COAST_THRESHOLD) / (1 - COAST_THRESHOLD)));
+                const inland = Math.pow(t, GAMMA);
+
+                return PMAX * inland;
+            };
+
+
 
 
             let moistureDjikstraResult = computeMoistureAvailabilityDijkstra(
@@ -434,6 +521,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                     // coldMultiplier,
                     elevationPenalty,
                     directionPenalty,
+                    continentalPenalty
                 }
             );
 
@@ -442,24 +530,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             ctx.derived.moisturePrev = moistureDjikstraResult.prev;
             ctx.derived.moistureCost = moistureDjikstraResult.cost;
 
-            // Symmetric, centered blur window chooser (same window for every row)
-            const getCenteredWindowForRow = (y: number, h: number, r: number): WindowSpec => {
-                return { dx0: -r, dx1: +r, dy0: -r, dy1: +r };
-            };
 
-            const landMaskF32 = new Float32Array(width * height);
-            for (let p = 0; p < width * height; p++) landMaskF32[p] = isLandMask[p]; // 0 or 1
-
-            //  potentially need to rework this as blur may not be the correct way to think about continental effect
-            // continental depends on if you have westerly wind or even scaling with latitude 
-            ctx.derived.continentalValue = blurMaskWithSAT_U8(
-                landMaskF32,
-                width,
-                height,
-                width / 8,
-                3,
-                getCenteredWindowForRow
-            );
 
         },
 
