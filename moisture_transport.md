@@ -20,3 +20,5 @@ i guess simple way to model moisture transport is trade winds around equator say
 transition zone 20-40 between trade and latitudes then 40-70 westerlies
 transition zone would have curling flows where its either moving northward or southward. 
 - although how would east asian moisture not curl downwards? why does it curl upwards?
+
+djikstra is very much the wrong abstraction for moisture transport - moisture does not find the best way to get anywhere it just gets carried by the atmosphere

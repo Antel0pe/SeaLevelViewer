@@ -1,6 +1,6 @@
 // RecolorGridLayer.ts
 import L from "leaflet";
-import { tileRowToLat } from "./utils";
+import { smoothstep, tileRowToLat } from "./utils";
 import { blurMaskWithSAT_U8, makeGetWindowForRow, windowByLatitudeAnchors, WindowSpec } from "./RectangleSum";
 import { RecolorParams, WorldContext, VIEW_TYPE, RGB, LayerClickResult } from "./types";
 import { computeMoistureAvailabilityDijkstra, Dir4 } from "./computeMoistureAvailabilityDijkstra";
@@ -296,6 +296,13 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
         computeMoisture_global: function (ctx: WorldContext) {
             const { width, height } = ctx.inputs;
             const { isLandMask, sstByLatitude } = ctx.derived;
+            const {
+                vaporLatitudeExponent,
+                mountainRainout,
+                continentalDryness,
+                coastalThreshold,
+            } = ctx.params;
+
 
             const MAX_SST = 29.5;
             const MIN_SST = -1.8;
@@ -312,7 +319,8 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const latDeg = latByRow[y];
                 const latRad = (Math.abs(latDeg) * Math.PI) / 180;
 
-                const vaporCap = clamp01(Math.pow(Math.cos(latRad), 1.5));
+                // const vaporCap = clamp01(Math.pow(Math.cos(latRad), 1.5));
+                const vaporCap = clamp01(Math.pow(Math.cos(latRad), vaporLatitudeExponent));
 
                 const rowOff = y * width;
                 for (let x = 0; x < width; x++) {
@@ -353,12 +361,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 // Transition half-width in degrees around band boundaries
                 const TRANS = 10;
-
-                const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
-                const smoothstep = (a: number, b: number, x: number) => {
-                    const t = clamp01((x - a) / (b - a));
-                    return t * t * (3 - 2 * t);
-                };
 
                 // Returns a multiplier in [0,1] that goes to 0 at boundary,
                 // and to 1 outside the ±TRANS zone around that boundary.
@@ -454,11 +456,12 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 // Soft knee so tiny bumps do almost nothing
                 const D0 = 100;   // meters: start of meaningful lift
-                const D1 = 200;  // meters: "big" lift over one step (your pixels are huge)
+                const D1 = 500;  // meters: "big" lift over one step (your pixels are huge)
                 const t = Math.max(0, Math.min(1, (upslope - D0) / (D1 - D0)));
 
                 // Additive per-step penalty. Start small.
-                const Pmax = 0.1;
+                // const Pmax = 0.1;
+                const Pmax = mountainRainout;
                 return Pmax * t * t;
             };
 
@@ -498,9 +501,11 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const c = ctx.derived.continentalValue[v];
 
                 // --- Tunables ---
-                const COAST_THRESHOLD = 0.55; // below this = effectively maritime
+                // const COAST_THRESHOLD = 0.5; // below this = effectively maritime
+                const COAST_THRESHOLD = coastalThreshold; // below this = effectively maritime
                 const GAMMA = 2.5;            // nonlinearity (deep interiors matter most)
-                const PMAX = 0.5;            // max additive cost per land step
+                // const PMAX = 0.5;            // max additive cost per land step
+                const PMAX = continentalDryness;
 
                 // Push coastal band to ~0, ramp inland
                 const t = Math.max(0, Math.min(1, (c - COAST_THRESHOLD) / (1 - COAST_THRESHOLD)));
@@ -538,19 +543,17 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             const { width, height } = ctx.inputs;
             const {
                 iceLevel,
-                latitudeBiasExponent,
-                elevationOfIce,
-                seaBias,
-                landBias,
-                elevationModifier,
-                dryingOutExponent,
 
-                moistureBias,
+                T_POLE,
+                lapseRate,
+                seasonalityStrength,
+                continentalSeasonBoost,
+                maxGlobalCooling,
+
                 moistureScale,
-
-                continentalBias,
-                continentalScale,
+                continentalScale
             } = ctx.params;
+
 
             // Keep this for UI/debug continuity (even though we no longer use it as a melt scale)
             const threshold = 1 - iceLevel;
@@ -561,15 +564,18 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
             // These are intended as reasonable defaults; tune as needed.
             const A = 20;     // mean equator-to-pole contrast
             const T_EQ = 27;     // mean annual equatorial surface temp (°C)
-            const T_POLE = -25; // mean annual polar surface temp (°C)
+            // const T_POLE = -25; // mean annual polar surface temp (°C)
             // const L = 6.5;    // °C per km lapse rate
-            const L = 1.5; // due to tile resolution
-            const S = 15;     // seasonal amplitude scale
-            const C = 10;      // summer continental warming scale
-            const DELTA = 18;  // max global cooling at iceLevel=1
+            // const L = 1.5; // due to tile resolution
+            // const S = 15;     // seasonal amplitude scale
+            // const C = 10;      // summer continental warming scale
+            // const DELTA = 18;  // max global cooling at iceLevel=1
             const ELEV_KM_MAX = 5;   // maps elevationFactor (0..1) to 0..5 km
             const METERS_PER_ELEV_UNIT = 77; // choose this based on your source DEM
-
+            const L = lapseRate;
+            const S = seasonalityStrength;
+            const C = continentalSeasonBoost;
+            const DELTA = maxGlobalCooling;
 
             // Melt conversion: converts °C-like summer warmth into "ice units" comparable to accum
             // Since accum can be >1 if you bias/scale moisture, keep this small.
@@ -627,15 +633,15 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 const elevation_km = elevation_m / 1000;
 
                 // keep this for output/debug
-                const elevationFactor = clamp01(elevation / elevationOfIce);
-                const elevationWeighting = 1 + elevationModifier * elevationFactor;
+                // const elevationFactor = clamp01(elevation / elevationOfIce);
+                // const elevationWeighting = 1 + elevationModifier * elevationFactor;
 
                 // keep existing land weighting (for debug/UI continuity)
-                const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
+                // const landWeighting = lerp(seaBias, landBias, isLandMask[p]); // 0/1
+                const landWeighting = -1;
 
                 // --- ACCUMULATION (only moisture) ---
-                const moistureAvailable =
-                    (moistureAvailability[p] * moistureScale) + moistureBias;
+                const moistureAvailable = moistureAvailability[p] * moistureScale;
 
                 const accum = moistureAvailable;
 
@@ -650,8 +656,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 const T_mean = T_lat + T_elev + dT_global;
 
-                const continentalRaw =
-                    (continentalValue[p] * continentalScale) + continentalBias;
+                const continentalRaw = continentalValue[p] * continentalScale;
                 const COAST = 0.5;
                 const continental01 = clamp01((continentalRaw - COAST) / (1 - COAST));
 
@@ -684,7 +689,7 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
 
                 // Outputs (keep stable fields)
                 ctx.outputs.latitudeWeighting[p] = latitudeWeighting;
-                ctx.outputs.elevationWeighting[p] = elevationWeighting;
+                ctx.outputs.elevationWeighting[p] = -1;
                 ctx.outputs.landWeighting[p] = landWeighting;
                 ctx.outputs.moistureAvailable[p] = moistureAvailable;
 
@@ -845,12 +850,6 @@ export function createRecolorLayer(opts: CreateRecolorLayerOpts): RecolorLayer {
                 // Option A (as requested literally): treat 0.5 as neutral, <0.5 blue, >0.5 red
                 const signed = (c - 0.5) * 2; // now roughly [-1..1]
                 return tempDivergingColor(signed, 1);
-            }
-
-            if (viewType === VIEW_TYPE.TW_PLUS_TS) {
-                const v = out.Tw[wIndex] + out.Ts[wIndex];
-                // Tune this: seasonal sums can be big; start with 60
-                return tempDivergingColor(v, 60);
             }
 
             if (viewType === VIEW_TYPE.ICE) {

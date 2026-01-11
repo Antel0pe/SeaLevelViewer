@@ -120,11 +120,19 @@ function clamp(v: number, lo: number, hi: number) {
 }
 
 export function tileRowToLat(
-    map: L.Map,
-    coords: L.Coords,
-    py: number,
-    tileHeight: number
+  map: L.Map,
+  coords: L.Coords,
+  py: number,
+  tileHeight: number
 ): number {
-    const globalY = coords.y * tileHeight + py;
-    return map.unproject(L.point(0, globalY), coords.z).lat;
+  const globalY = coords.y * tileHeight + py;
+  return map.unproject(L.point(0, globalY), coords.z).lat;
 }
+
+export function clamp01(x: number) {
+  return Math.max(0, Math.min(1, x))
+};
+export function smoothstep(a: number, b: number, x: number) {
+  const t = clamp01((x - a) / (b - a));
+  return t * t * (3 - 2 * t);
+};

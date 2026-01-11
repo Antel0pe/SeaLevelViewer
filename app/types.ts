@@ -56,43 +56,62 @@ export type WorldContext = {
 export type RGB = readonly [number, number, number];
 
 export enum VIEW_TYPE {
-    LAND_SEA = "Land / Sea",
-    LAND_SEA_ICE = "Land / Sea / Ice",
-    MOISTURE_AVAILABILITY = "Moisture Availability",
-    SST_BY_LATITUDE = "SST by Latitude",
-    T_MEAN = "T_mean (Mean Temperature)",
-    CONTINENTAL01 = "Continental01 (Continental Effect)",
-      TW = "Tw (Winter Temperature)",
-  TS = "Ts (Summer Temperature)",
-    TW_PLUS_TS = "Tw + Ts (Winter + Summer)",
-    ICE = "Ice (Potential Accumulation)",
-    MELT = "Melt (Melt Pressure)",
-    T_ELEV = "T_elev (Elevation Temperature)",
-    COST = "Moisture Cost",
-SRC = "Moisture Source (src)",
-COST_STEP = "Moisture Cost Step (Δcost)",
-COST_FROM_SRC = "Moisture Cost From Source (Δcost src→a)",
-  PREV_DIR = "Prev Direction",
+  // --- Physical world ---
+  LAND_SEA = "Land / Sea",
+  LAND_SEA_ICE = "Land / Sea / Ice",
+
+  // --- Climate state ---
+  T_MEAN = "Mean Temperature",
+  TW = "Winter Temperature",
+  TS = "Summer Temperature",
+  T_ELEV = "Elevation Cooling",
+
+  // --- Ice outcome ---
+  ICE = "Potential Ice Accumulation",
+  MELT = "Ice Melt Pressure",
+
+  // --- Moisture availability ---
+  SST_BY_LATITUDE = "Latitudinal Moisture Source",
+  MOISTURE_AVAILABILITY = "Moisture Availability",
+  CONTINENTAL01 = "Continental Effect",
+
+  // --- Moisture transport mechanics ---
+  SRC = "Moisture Source",
+  PREV_DIR = "Moisture Flow Direction",
+  COST_STEP = "Moisture Loss per Step",
+  COST_FROM_SRC = "Moisture Loss from Source",
+  COST = "Moisture Transport Cost",
 }
 
+
 export type RecolorParams = {
+    // --- Sea level / coastlines ---
     seaLevel: number;
     iceLevel: number;
-
-    latitudeBiasExponent: number;
-    elevationOfIce: number;
-    seaBias: number;
-    landBias: number;
-    elevationModifier: number;
     seaLevelDropDueToIce: number;
-    dryingOutExponent: number;
-    moistureBias: number;
+
+    // --- Temperature structure ---
+    T_POLE: number;          // Polar mean temperature (°C-like)
+    lapseRate: number;       // L: °C per km
+    seasonalityStrength: number; // S
+    continentalSeasonBoost: number; // C
+    maxGlobalCooling: number; // DELTA
+
+    // --- Moisture supply ---
     moistureScale: number;
 
-    continentalBias: number;
     continentalScale: number;
+
+    // --- Dryness / transport ---
+    continentalDryness: number; // continentalPenalty.PMAX
+    mountainRainout: number;    // elevationPenalty.Pmax
+    coastalThreshold: number;   // continentalPenalty.COAST_THRESHOLD
+    vaporLatitudeExponent: number; // exponent in cos(|lat|)^exp
+
+    // --- Rendering / debug ---
     viewType: VIEW_TYPE;
 };
+
 
 export type LayerClickResult = {
     latlng: L.LatLng;
